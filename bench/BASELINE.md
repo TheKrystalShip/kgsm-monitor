@@ -92,3 +92,42 @@ Total pure-parse ≈ **11.5 µs = 0.7 % of a frame.** The frame is **syscall-bou
    servers × ~30 µs = 3 ms**, still 0.3 % of the 1 Hz budget. The host runs out of RAM/CPU for actual
    game servers long before the monitor's sampling cost matters. **Disk (1.56 ms) remains the single
    biggest cost — bigger than per-server sampling will be at any realistic server count.**
+   *(Measured in the Slice 2 addendum below: 48 µs/server, a bit above this estimate but the conclusion holds.)*
+
+---
+
+## Slice 2 addendum — per-server cgroup cost (2026-06-11)
+
+Re-run after embedding `kgsm-lib` and wiring the per-server cgroup sampler. Same host/job.
+
+```
+| Method            | Mean         | Allocated |  note
+|------------------ |-------------:|----------:|--------------------------------------------
+| BuildFrame        | 1,610.40 µs  | 398.02 KB | unchanged vs Slice 1 (1,611 µs) — no regression
+| SerializeFrame    |     1.86 µs  |   1.36 KB | servers[] adds negligible serialize cost
+| Server (1 cgroup) |    48.19 µs  |  26.07 KB | one live systemd cgroup: cpu.stat+memory.current+pids.current
+```
+
+- **Frame is statistically unchanged.** With no KGSM instances running this session (the one instance,
+  `7dtd`, is standalone-native + stopped → not cgroup-addressable), the frame path executes the
+  server-less branch (a null-check + empty array). So **`BuildFrame` here is a 0-server floor** — the
+  honest per-server cost is measured separately via `SourceBenchmarks.Server`, which points the sampler
+  at a real systemd service cgroup (`ollama.service`) discovered on the host.
+- **Per-server cost = ~48 µs** (one systemd cgroup: a `Directory.Exists` stat + three small file reads +
+  parse + rate). That's between the Memory (15 µs) and Network (58 µs) sources — squarely in the cheap tier.
+- **Projection** (per-server is linear; the host frame is fixed at ~1.61 ms):
+
+  | Servers | Per-server total | Frame (incl. host) | % of 1 s tick |
+  |--------:|-----------------:|-------------------:|--------------:|
+  | 10      | 0.48 ms          | ~2.1 ms            | 0.21 %        |
+  | 33      | 1.59 ms          | ~3.2 ms            | 0.32 %        | ← per-server overtakes Disk here
+  | 100     | 4.82 ms          | ~6.4 ms            | 0.64 %        |
+
+  Even **100 servers keeps the frame under 1 %** of the budget. Disk (~1.57 ms) stays the single biggest
+  cost until ~30 servers; beyond that, aggregate per-server sampling leads — but both are dwarfed by the
+  920+ ms of idle headroom. Viability is not in question at any realistic fleet size.
+- ⚠️ **Caveats that still need a running fleet to close:** (1) this measures one *systemd* cgroup; the
+  container path (`docker-<id>.scope`) is unmeasured (no Docker running). (2) `io.stat` is **absent** on
+  these cgroups (`IOAccounting=no` default) so io rates are null — when enabled, add one more small read
+  per server. (3) Cost is per *addressable* server; native-standalone instances (Slice 3) are skipped and
+  cost only the `Directory.Exists` miss (~ns).

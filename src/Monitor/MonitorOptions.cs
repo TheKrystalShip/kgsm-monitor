@@ -37,6 +37,32 @@ public sealed class MonitorOptions
     /// </summary>
     public IReadOnlyList<string> IfaceDenyPrefixes { get; init; } = ["veth"];
 
+    /// <summary>
+    /// Path to the KGSM executable (<c>kgsm.sh</c>). <c>KGSM_MONITOR_KGSM_PATH</c>. When
+    /// empty (the default) per-server sampling is disabled and the monitor runs host-only,
+    /// so the daemon is useful even where KGSM is absent. When set, the monitor periodically
+    /// runs <c>instances list --detailed</c> to learn the server watch-list.
+    /// </summary>
+    public string KgsmPath { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Unix socket the monitor owns for KGSM event delivery (the low-latency watch-list
+    /// delta in Slice 2b). <c>KGSM_MONITOR_KGSM_SOCKET</c>. Distinct from <see cref="SocketPath"/>
+    /// (which the API scrapes); this one is where KGSM pushes <c>instance_*</c> events.
+    /// </summary>
+    public string KgsmSocketPath { get; init; } = "/run/kgsm-monitoring.sock";
+
+    /// <summary>
+    /// How often to re-list KGSM instances (the source-of-truth resync), in milliseconds.
+    /// <c>KGSM_MONITOR_RESYNC_MS</c>. Default 15s, floor 1s. This shells out to KGSM (a
+    /// process spawn — the very cost the metrics path avoids), so it runs on its own slow
+    /// cadence, off the 1 Hz metrics tick.
+    /// </summary>
+    public int ServerResyncMs { get; init; } = 15_000;
+
+    /// <summary>True when per-server sampling is configured (a KGSM path was provided).</summary>
+    public bool KgsmEnabled => KgsmPath.Length > 0;
+
     public static MonitorOptions FromEnvironment()
     {
         static string? Env(string key) => Environment.GetEnvironmentVariable(key);
@@ -48,6 +74,10 @@ public sealed class MonitorOptions
             interval = iv;
 
         string socket = Env("KGSM_MONITOR_SOCKET") is { Length: > 0 } s ? s : defaults.SocketPath;
+
+        int resync = defaults.ServerResyncMs;
+        if (int.TryParse(Env("KGSM_MONITOR_RESYNC_MS"), out int rs) && rs >= 1000)
+            resync = rs;
 
         UnixFileMode mode = defaults.SocketMode;
         if (Env("KGSM_MONITOR_SOCKET_MODE") is { Length: > 0 } modeStr)
@@ -63,6 +93,9 @@ public sealed class MonitorOptions
             SocketMode = mode,
             MountFsDeny = ParseSet(Env("KGSM_MONITOR_MOUNT_FS_DENY")) ?? defaults.MountFsDeny,
             IfaceDenyPrefixes = ParseList(Env("KGSM_MONITOR_IFACE_DENY")) ?? defaults.IfaceDenyPrefixes,
+            KgsmPath = Env("KGSM_MONITOR_KGSM_PATH") is { Length: > 0 } kp ? kp : defaults.KgsmPath,
+            KgsmSocketPath = Env("KGSM_MONITOR_KGSM_SOCKET") is { Length: > 0 } ks ? ks : defaults.KgsmSocketPath,
+            ServerResyncMs = resync,
         };
     }
 

@@ -1,3 +1,4 @@
+using TheKrystalShip.KGSM.Extensions;
 using TheKrystalShip.KGSM.Monitor;
 using TheKrystalShip.KGSM.Monitor.Model;
 using TheKrystalShip.KGSM.Monitor.Sampling;
@@ -7,6 +8,16 @@ var builder = WebApplication.CreateSlimBuilder(args);
 // All configuration comes from environment variables (systemd-friendly, AOT-safe).
 var options = MonitorOptions.FromEnvironment();
 builder.Services.AddSingleton(options);
+
+// Per-server sampling (Slice 2) is opt-in: only when a KGSM path is configured. The
+// embedded kgsm-lib supplies the instance watch-list (resync) and, later, event deltas.
+// Without it the monitor runs host-only and the servers array is simply empty.
+if (options.KgsmEnabled)
+{
+    builder.Services.AddKgsmServices(options.KgsmPath, options.KgsmSocketPath);
+    builder.Services.AddSingleton<ServerSampler>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerSampler>());
+}
 
 // The sampler is one singleton that is also the hosted background service, so the
 // /metrics endpoint reads the exact instance that is ticking.

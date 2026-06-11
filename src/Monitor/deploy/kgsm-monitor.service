@@ -16,6 +16,20 @@ Environment=KGSM_MONITOR_SOCKET_MODE=660
 # Environment=KGSM_MONITOR_IFACE_DENY=veth,docker,br-
 # Environment=KGSM_MONITOR_MOUNT_FS_DENY=
 
+# Per-server metrics (Slice 2): point at kgsm.sh to enable cgroup sampling of running
+# instances. Unset = host-only. Use a path OUTSIDE /home (ProtectHome=true below hides
+# /home); the packaged launcher at /usr/local/bin/kgsm is the right target.
+# Environment=KGSM_MONITOR_KGSM_PATH=/usr/local/bin/kgsm
+# Environment=KGSM_MONITOR_KGSM_SOCKET=/run/kgsm-monitor/monitoring.sock
+# Environment=KGSM_MONITOR_RESYNC_MS=15000
+#
+# Per-server disk-IO is opt-in: io.stat only exists when the io controller is accounted
+# for the server's cgroup. To get ioReadBps/ioWriteBps instead of null, set
+# `IOAccounting=yes` on each KGSM *game-server* unit (not this one) — e.g. a drop-in
+#   [Service]
+#   IOAccounting=yes
+# CPU/memory/pids need no such flag (always accounted under cgroup v2).
+
 # systemd creates /run/kgsm-monitor (owned root:<group>, traversable by the group).
 RuntimeDirectory=kgsm-monitor
 RuntimeDirectoryMode=0750

@@ -10,7 +10,10 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// write is a single reference swap (conflation — latest always wins, stale frames
 /// are never queued).
 /// </summary>
-public sealed class MetricsSampler(ILogger<MetricsSampler> logger, MonitorOptions options) : BackgroundService
+public sealed class MetricsSampler(
+    ILogger<MetricsSampler> logger,
+    MonitorOptions options,
+    ServerSampler? servers = null) : BackgroundService
 {
     private readonly int _intervalMs = options.IntervalMs;
 
@@ -18,6 +21,10 @@ public sealed class MetricsSampler(ILogger<MetricsSampler> logger, MonitorOption
     private readonly CpuSource _cpu = new();
     private readonly NetworkSource _net = new(options.IfaceDenyPrefixes);
     private readonly DiskSource _disk = new(options.MountFsDeny);
+
+    // Per-server cgroup sampler — null when KGSM integration is unconfigured (the
+    // monitor then runs host-only and the servers array is always empty).
+    private readonly ServerSampler? _servers = servers;
 
     private volatile Snapshot? _latest;
 
@@ -68,6 +75,7 @@ public sealed class MetricsSampler(ILogger<MetricsSampler> logger, MonitorOption
             Cpu: new CpuMetrics(cpuTotal, perCore, load),
             Mem: mem,
             Disk: disk,
-            Net: net);
+            Net: net,
+            Servers: _servers?.Sample() ?? []);
     }
 }

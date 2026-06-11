@@ -1,9 +1,9 @@
 # kgsm-monitor
 
-A lightweight **Native-AOT** daemon that samples host (and, from Slice 2, per-game-server)
-metrics straight from the Linux kernel — `/proc`, `/sys`, cgroup v2 — and serves the
-latest snapshot over a unix-socket `GET /metrics`. Designed to feed live dashboards in
-the KGSM ecosystem without nuking host resources (it never shells out to `top`/`ps`).
+A lightweight **Native-AOT** daemon that samples host **and per-game-server** metrics
+straight from the Linux kernel — `/proc`, `/sys`, cgroup v2 — and serves the latest
+snapshot over a unix-socket `GET /metrics`. Designed to feed live dashboards in the KGSM
+ecosystem without nuking host resources (it never shells out to `top`/`ps`).
 
 See **[PLAN.md](PLAN.md)** for the full design, decisions, KGSM-integration facts, and
 the slice-by-slice work tracker.
@@ -37,6 +37,29 @@ curl --unix-socket /tmp/kgsm-monitor.sock http://localhost/metrics | jq
 | `KGSM_MONITOR_INTERVAL_MS` | `1000` | Sampling cadence (floor 100 ms) |
 | `KGSM_MONITOR_IFACE_DENY` | `veth` | Comma-separated interface-name prefixes to exclude |
 | `KGSM_MONITOR_MOUNT_FS_DENY` | *(empty)* | Extra fs types to hide (pseudo-fs already filtered) |
+| `KGSM_MONITOR_KGSM_PATH` | *(empty)* | Path to `kgsm.sh`. **Unset ⇒ host-only**; set ⇒ per-server cgroup sampling on |
+| `KGSM_MONITOR_KGSM_SOCKET` | `/run/kgsm-monitoring.sock` | Socket the monitor owns for KGSM events (Slice 2b) |
+| `KGSM_MONITOR_RESYNC_MS` | `15000` | How often to re-list KGSM instances (floor 1 s; off the metrics tick) |
+
+### Per-server metrics (Slice 2)
+
+When `KGSM_MONITOR_KGSM_PATH` is set, each frame gains a `servers[]` array — one entry per
+**running, cgroup-addressable** KGSM instance (systemd units and Docker containers):
+
+```jsonc
+"servers": [
+  { "id": "factorio", "name": "factorio", "kind": "systemd",
+    "cpuPctCore": 92.4,        // % of ONE core (htop convention) — can exceed 100
+    "memBytes": 1734967296,    // memory.current (includes page cache)
+    "ioReadBps": null,         // null unless the unit sets IOAccounting=yes
+    "ioWriteBps": null,
+    "pids": 12 }
+]
+```
+
+Stopped instances and standalone-native instances (no cgroup; Slice 3) are simply absent —
+a server appears only when its cgroup exists. Per-server disk-IO requires `IOAccounting=yes`
+on the unit; otherwise the io fields are `null` (not measured ≠ no I/O).
 
 ## Deploy
 
@@ -48,7 +71,12 @@ hardened systemd unit (it does **not** start the daemon; pass `--enable` to
 ## Status
 
 Slice 1 (host-only CPU/MEM/DISK/NET over the unix socket) — **complete & AOT-proven**:
-self-ticking sampler, env-configurable filters, 23 golden-file tests, measured self-cost
+self-ticking sampler, env-configurable filters, golden-file tests, measured self-cost
 ≈ 0.02 % of host under full load. **Perf baseline:** a full diagnostic frame is **1.61 ms**
 (0.16 % of the 1 s tick; ~620× headroom) — see **[bench/BASELINE.md](bench/BASELINE.md)**.
-Per-server metrics via cgroups + embedded `kgsm-lib` land in Slice 2. See **[PLAN.md](PLAN.md)**.
+
+Slice 2a (**per-server cgroups + embedded `kgsm-lib`**) — **complete & AOT-proven**: a
+never-failing resolver + stat-and-skip `CgroupSampler` (cpu/mem/pids, opt-in io) driven by
+an off-tick KGSM instance resync; **40 golden/resolver tests**; per-server read **= 48 µs**
+(100 servers ≈ 0.5 % of the tick). Slice 2b (event-driven watch-list delta) and Slice 3
+(native-standalone process-tree fallback) are next. See **[PLAN.md](PLAN.md)**.

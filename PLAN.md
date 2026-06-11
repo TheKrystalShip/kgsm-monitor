@@ -4,9 +4,11 @@
 > verified, and a slice-by-slice work tracker. Project name `kgsm-monitor` /
 > namespace `TheKrystalShip.KGSM.Monitor` follows the `kgsm-*` convention.
 >
-> **Status:** Slice 1 (host-only) **complete** — sampler + env config + filters +
-> 23 golden-file tests + measured self-cost under load, all proven on Native AOT
-> (see §11 Validation log). Slices 2–3 tracked in §10.
+> **Status:** Slice 1 (host-only) **complete**; **Slice 2a (per-server cgroups +
+> embedded kgsm-lib) complete** — resolver + `CgroupSampler` (stat-and-skip) +
+> off-tick resync, 40 golden/resolver tests, AOT-proven live (resync deserialized
+> the instance list; 48 µs/server). Slice 2b (event-driven delta) + Slice 3
+> (native-standalone fallback) tracked in §10. See §11 Validation log.
 
 ---
 
@@ -100,12 +102,15 @@ kgsm-monitor/
       Snapshot.cs             # host DTO graph (records)
       MonitorJsonContext.cs   # [JsonSerializable(typeof(Snapshot))] source-gen, camelCase
     Sampling/                 # each source: pure Parse + ComputeRates helpers (golden-file testable)
-      MetricsSampler.cs       # BackgroundService + PeriodicTimer(options.IntervalMs); volatile latest; conflation
+      MetricsSampler.cs       # BackgroundService + PeriodicTimer(options.IntervalMs); volatile latest; conflation; optional ServerSampler
       CpuSource.cs            # /proc/stat cpu+cpuN jiffies delta -> %
       MemorySource.cs         # /proc/meminfo (instant, MemAvailable)
       NetworkSource.cs        # /proc/net/dev delta -> bps/pps per iface (lo + deny-prefixes excluded)
       DiskSource.cs           # DriveInfo usage (pseudo-fs + deny filtered) + /sys/block/*/stat IO delta
       SystemSource.cs         # /proc/loadavg, /proc/uptime, hostname
+      ServerSampler.cs        # [Slice 2] hosted; volatile watch-list, off-tick KGSM resync; exposes Sample()
+      ServerCgroupResolver.cs # [Slice 2] (lifecycle, is-container) -> candidate cgroup paths; never fails
+      CgroupSampler.cs        # [Slice 2] stat-and-skip; cpu.stat/memory.current/pids.current/io.stat(opt); pure Parse/ComputeRates
     deploy/
       kgsm-monitor.service    # hardened systemd unit (root, Restart=always, RuntimeDirectory socket, group-share recipe)
   tests/Monitor.Tests/        # 23 golden-file tests over captured /proc fixtures + config tests
@@ -142,14 +147,18 @@ kgsm-monitor/
 - [x] Config: interval, socket path, socket mode, iface/mount deny — all env vars (`MonitorOptions`)
 - [x] Install/deploy: `deploy/install.sh` + hardened unit written & validated (enable on host = user action)
 
-### Slice 2 — per-server via cgroups + embed kgsm-lib
-- [ ] Add `kgsm-lib` ProjectReference (net9 lib in net10 AOT app)
-- [ ] Confirm cgroup v2 (`stat -fc %T /sys/fs/cgroup` → `cgroup2fs`) and Docker cgroup driver
-- [ ] `EventService` bound to `monitoring.sock`; handle `instance_started/stopped/removed`
-- [ ] Periodic `InstanceService` resync = source of truth (events = delta)
-- [ ] Resolver: `(LifecycleManager, isContainer)` → cgroup path | container scope | PID (see §6)
-- [ ] `CgroupSampler`: `cpu.stat` usage_usec→rate, `memory.current`, `io.stat`, `pids.current`
-- [ ] Extend snapshot: `servers: [{ id, name, kind, cpuPct, memBytes, ioReadBps, ioWriteBps, pids }]`
+### Slice 2a — per-server via cgroups + embed kgsm-lib ✅ COMPLETE
+- [x] Add `kgsm-lib` ProjectReference (net9 lib in net10 AOT app) — builds 0-warning; AOT publish 0 ILC, 11 MB ELF, 0 `libcoreclr`
+- [x] Confirm cgroup v2 (`stat -fc %T /sys/fs/cgroup` → `cgroup2fs`) ✓. **Docker cgroup driver deferred** (Docker not running this session — container path built but unmeasured; stat-and-skip makes it safe)
+- [x] Periodic `InstanceService.GetAll()` resync = source of truth — own slow timer (`KGSM_MONITOR_RESYNC_MS`, default 15 s), off the metrics tick. **Proven live under AOT** (`server resync: 1 instance(s) known`)
+- [x] Resolver `ServerCgroupResolver`: `(LifecycleManager, isContainer)` → candidate cgroup paths; **never fails** (liveness = stat-and-skip at sample time). isContainer = non-empty `compose_file` (§6). systemd→`system.slice/<unit>`; container→`docker-<id>.scope`|`docker/<id>`; native-standalone→none (Slice 3)
+- [x] `CgroupSampler`: `cpu.stat` usage_usec→`cpuPctCore` rate, `memory.current`, `pids.current`, `io.stat` (**opt-in: null when absent**, needs `IOAccounting=yes`). Pure `Parse`/`ComputeRates` helpers
+- [x] Extend snapshot: `servers: [{ id, name, kind, cpuPctCore, memBytes, ioReadBps?, ioWriteBps?, pids }]` (always present, empty when none)
+- [x] Wired DI conditionally (`KGSM_MONITOR_KGSM_PATH` set ⇒ per-server on; else host-only). 17 new golden/resolver tests (**40 total, green**); per-server cost measured **48 µs/server** (`bench/BASELINE.md` Slice 2 addendum)
+
+### Slice 2b — event-driven watch-list delta (follow-up)
+- [ ] `EventService` bound to `monitoring.sock` (monitor owns the socket; KGSM connects via `socat`); `Initialize()` + handlers for `instance_started/stopped/removed/uninstalled` → low-latency add/remove on top of the resync floor
+- [ ] Re-measure container path + `SourceBenchmarks.Disk` once Docker + a running fleet are present
 
 ### Slice 3 — standalone-native fallback
 - [ ] `ProcTreeSampler`: `.pid` → PID → walk `/proc/*/stat` `ppid` tree; sum `utime+stime`, RSS (`statm`), `/proc/[pid]/io`
@@ -182,8 +191,21 @@ kgsm-monitor/
 - Validity: frame ≈ Σ(sources) on both latency *and* allocation (397.98 KB ≈ 397.85 KB). Levers noted for pushing rate (read `/proc/self/mountinfo` + `statvfs` survivors instead of `DriveInfo` → kills scaling; decouple disk-usage cadence → ~50 µs frame; span-split to cut allocs).
 - ⚠️ **Caveat:** captured on an **idle host (24 mounts)**; Disk cost scales with mount count, which grows with containerized servers — so 1.61 ms is a clean-host floor. **Re-measure `SourceBenchmarks.Disk` in Slice 2** when containers are present. Even 5–10× is ~1 % of the tick, so viability holds; the per-server cgroup reads (~tens of µs each) still leave huge headroom.
 
+**2026-06-11 — Slice 2a per-server cgroups, embedded kgsm-lib, Native AOT, live:**
+- **Embed + AOT:** monitor (net10 AOT) references `kgsm-lib` (net9, `IsAotCompatible`). `dotnet publish -r linux-x64 -p:PublishAot=true` → **0 ILC warnings**, 11 MB native ELF (was 9.7 MB), **0 `libcoreclr` links**.
+- **Runtime smoke (the AOT proof that matters):** ran the published binary with `KGSM_MONITOR_KGSM_PATH` set. It spawned `kgsm.sh instances list --detailed --json`, the embedded lib **deserialized the instance list under AOT** (`server resync: 1 instance(s) known` — the `7dtd` instance), and `GET /metrics` served a frame carrying the new `servers` array. A 0-warning ILC count alone wouldn't have caught a reflection fallback in the DI graph / `ProcessRunner` — running it did.
+- **Stat-and-skip validated:** `7dtd` is **standalone-native + stopped** → not cgroup-addressable → correctly absent from `servers` (no crash, no zero-row). The resolver returns a candidate path that simply doesn't exist; the sampler skips it.
+- **Live cgroup read proven** (throwaway probe, since no game-servers run): `CgroupSampler.Sample` against the real `ollama.service` cgroup returned `kind=systemd, memBytes≈547 MB, pids=45, io=null` — matching a hand `cat` of the same files. `io=null` confirms the opt-in path (services default `IOAccounting=no`).
+- **Env facts (verified on host):** `/sys/fs/cgroup` = `cgroup2fs`; every `system.slice/*.service` exposes `cpu.stat`(`usage_usec`)/`memory.current`/`pids.current`, but **`io.stat` is absent** (root `subtree_control` = `cpu memory pids`, `DefaultIOAccounting=no`). Per-server **disk-IO is therefore opt-in**, a conscious scope parallel to the host-only/no-per-server-network cut.
+- **Tests:** 17 new (cgroup parse against real captures + deterministic `ComputeCpuPctCore` + resolver path construction) → **40 total, green**. Committed suite stays deterministic (the live probe was throwaway).
+- **Perf:** host frame **unchanged at 1,610 µs** (server-less path = null-check; no regression). Per-server cgroup read **= 48 µs** against a live cgroup → 100 servers ≈ 4.8 ms ≈ 0.5 % of the 1 s tick. See `bench/BASELINE.md` Slice 2 addendum.
+- **Host-only path (no KGSM) re-verified after the DI change:** `MetricsSampler` now takes `ServerSampler? = null`; with `KGSM_MONITOR_KGSM_PATH` unset, `ServerSampler` is never registered. Ran the AOT binary with no `KGSM_*` vars → started clean (no `Unable to resolve service`), served `servers: []` + 16 cores / 2 mounts / 2 ifaces. The built-in DI container honours the optional-parameter default on the real resolve call-site, not just in the benchmark's direct `new`.
+
 ## 12. Open questions
 - ~~Socket location/perms for the API consumer~~ → **resolved**: socket chmod `0660` (configurable), unit ships a `Group=kgsm` group-sharing recipe (commented). Final call (root-API vs shared group) is a deploy-time decision.
-- Whether to bump `kgsm-lib` to net10 when Slice 2 lands (optional; net9 consumed fine).
-- Docker cgroup driver on this host (decides `system.slice/docker-<id>.scope` path) — confirm in Slice 2.
+- Whether to bump `kgsm-lib` to net10 when Slice 2 lands (optional; net9 consumed fine under AOT — confirmed).
+- ~~Docker cgroup driver on this host~~ → **still open, deferred to 2b**: Docker wasn't running this session. The container resolver emits **both** candidates (`system.slice/docker-<id>.scope` for the systemd driver, `docker/<id>` for cgroupfs); stat-and-skip picks whichever exists. Confirm the driver + container-id length (short vs full 64-hex) against a live container.
+- Per-server **disk-IO is opt-in** (`io.stat` needs `IOAccounting=yes`); the unit should ship an `IOAccounting=yes` recipe (parallel to the `Group=kgsm` recipe) for operators who want it. `memory.current` includes reclaimable page cache (reads higher than RSS); switch to `memory.current − inactive_file` later if users read it as RSS.
+- **Deploy-time (hardened unit) — `ProtectHome=true` vs KGSM's reads:** the spawned `kgsm.sh` inherits the unit's sandbox and reads its *own* config (`~/.config/kgsm` / `$KGSM_ROOT`) + instance files. If any of those resolve under `/home`, every `GetAll()` throws → `Resync` catches → `_watch` stays empty → `servers[]` is **silently empty forever** (a warning logs, but the feature is dead). When enabling per-server on the hardened unit, ensure KGSM's root + instances live outside `/home` (or relax `ProtectHome`). Host-only path is unaffected.
+- **systemd unit-name escaping:** the resolver uses the literal unit name; systemd escapes special chars (`@`, certain `-`) in cgroup dir names. Fine for `7dtd`/`factorio`-style names; an escaped mismatch is a silent stat-and-skip (no crash), but exotic instance names would need `systemd-escape` parity to be sampled.
 - Live `iperf3`/`fio` throughput validation deferred (tools absent); net/disk rate math is covered by golden fixtures for now.

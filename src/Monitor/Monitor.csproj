@@ -21,4 +21,11 @@
     <InternalsVisibleTo Include="Monitor.Benchmarks" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Embedded for Slice 2 (per-server cgroup metrics): the single KGSM chokepoint
+         (instance resync + event watch + resolution metadata). net9 lib is
+         IsAotCompatible; consuming it from this net10 AOT app is a verified pattern. -->
+    <ProjectReference Include="../../../kgsm-lib/kgsm-lib/kgsm-lib.csproj" />
+  </ItemGroup>
+
 </Project>
