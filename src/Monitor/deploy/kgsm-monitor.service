@@ -23,6 +23,24 @@ Environment=KGSM_MONITOR_SOCKET_MODE=660
 # Environment=KGSM_MONITOR_KGSM_SOCKET=/run/kgsm-monitor/monitoring.sock
 # Environment=KGSM_MONITOR_RESYNC_MS=15000
 #
+# Slice 2b — event-driven watch-list delta. The monitor BINDS KGSM_MONITOR_KGSM_SOCKET and
+# KGSM connects to it (via `socat`) to push instance lifecycle events, so a started/stopped/
+# removed server is reflected sub-second instead of waiting up to RESYNC_MS. The periodic
+# resync stays the source of truth, so this is purely a latency win. Set KGSM_MONITOR_EVENTS=0
+# to bind no event socket and run resync-only (default is on whenever KGSM_MONITOR_KGSM_PATH
+# is set).
+# Environment=KGSM_MONITOR_EVENTS=1
+#
+# KGSM creates/addresses all event sockets under $KGSM_ROOT, so the monitor must bind the
+# SAME absolute path KGSM will connect to — point KGSM_MONITOR_KGSM_SOCKET at
+# $KGSM_ROOT/monitoring.sock (a dir both this unit and KGSM can reach; mind ProtectHome
+# below if $KGSM_ROOT is under /home). Then, in KGSM's config (config.ini), enable the
+# Unix-socket transport and add the monitor's filename to the broadcast list:
+#   enable_socket_events=true
+#   event_socket_filenames=kgsm.sock,monitoring.sock      # (or: kgsm.sh events socket enable)
+# Requires `socat` on the host. A non-binding event socket is silent — metrics still flow
+# via resync, so absence of fresh resyncs after an instance op is the only symptom (PLAN §12).
+#
 # Per-server disk-IO is opt-in: io.stat only exists when the io controller is accounted
 # for the server's cgroup. To get ioReadBps/ioWriteBps instead of null, set
 # `IOAccounting=yes` on each KGSM *game-server* unit (not this one) — e.g. a drop-in

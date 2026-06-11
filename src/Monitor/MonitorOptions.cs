@@ -60,6 +60,17 @@ public sealed class MonitorOptions
     /// </summary>
     public int ServerResyncMs { get; init; } = 15_000;
 
+    /// <summary>
+    /// Whether to listen for KGSM lifecycle events on <see cref="KgsmSocketPath"/> for
+    /// low-latency watch-list deltas (Slice 2b). <c>KGSM_MONITOR_EVENTS</c> (default on).
+    /// When off, per-server metrics still work — the periodic <see cref="ServerResyncMs"/>
+    /// floor remains the source of truth; this only stops the monitor binding the event
+    /// socket (useful in restricted sandboxes). No effect unless KGSM is configured at all
+    /// (<see cref="KgsmEnabled"/>). Accepts <c>1/0</c>, <c>true/false</c>, <c>yes/no</c>,
+    /// <c>on/off</c>.
+    /// </summary>
+    public bool EventsEnabled { get; init; } = true;
+
     /// <summary>True when per-server sampling is configured (a KGSM path was provided).</summary>
     public bool KgsmEnabled => KgsmPath.Length > 0;
 
@@ -96,6 +107,19 @@ public sealed class MonitorOptions
             KgsmPath = Env("KGSM_MONITOR_KGSM_PATH") is { Length: > 0 } kp ? kp : defaults.KgsmPath,
             KgsmSocketPath = Env("KGSM_MONITOR_KGSM_SOCKET") is { Length: > 0 } ks ? ks : defaults.KgsmSocketPath,
             ServerResyncMs = resync,
+            EventsEnabled = ParseBool(Env("KGSM_MONITOR_EVENTS"), defaults.EventsEnabled),
+        };
+    }
+
+    private static bool ParseBool(string? value, bool fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return fallback;
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "1" or "true" or "yes" or "on" => true,
+            "0" or "false" or "no" or "off" => false,
+            _ => fallback,
         };
     }
 

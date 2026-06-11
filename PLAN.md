@@ -6,9 +6,11 @@
 >
 > **Status:** Slice 1 (host-only) **complete**; **Slice 2a (per-server cgroups +
 > embedded kgsm-lib) complete** — resolver + `CgroupSampler` (stat-and-skip) +
-> off-tick resync, 40 golden/resolver tests, AOT-proven live (resync deserialized
-> the instance list; 48 µs/server). Slice 2b (event-driven delta) + Slice 3
-> (native-standalone fallback) tracked in §10. See §11 Validation log.
+> off-tick resync, AOT-proven live (48 µs/server). **Slice 2b (event-driven delta)
+> complete** — `EventService` on `monitoring.sock` nudges a coalesced authoritative
+> resync (single-writer drain loop), 44 tests incl. a real-socket round-trip,
+> AOT-proven live (`socat` push → resync). Slice 3 (native-standalone fallback)
+> tracked in §10. See §11 Validation log.
 
 ---
 
@@ -108,13 +110,14 @@ kgsm-monitor/
       NetworkSource.cs        # /proc/net/dev delta -> bps/pps per iface (lo + deny-prefixes excluded)
       DiskSource.cs           # DriveInfo usage (pseudo-fs + deny filtered) + /sys/block/*/stat IO delta
       SystemSource.cs         # /proc/loadavg, /proc/uptime, hostname
-      ServerSampler.cs        # [Slice 2] hosted; volatile watch-list, off-tick KGSM resync; exposes Sample()
+      ServerSampler.cs        # [Slice 2] hosted; volatile watch-list, off-tick KGSM resync; exposes Sample(). [2b] subscribes to KGSM lifecycle events → coalesced resync nudge (single-writer drain loop)
       ServerCgroupResolver.cs # [Slice 2] (lifecycle, is-container) -> candidate cgroup paths; never fails
       CgroupSampler.cs        # [Slice 2] stat-and-skip; cpu.stat/memory.current/pids.current/io.stat(opt); pure Parse/ComputeRates
     deploy/
       kgsm-monitor.service    # hardened systemd unit (root, Restart=always, RuntimeDirectory socket, group-share recipe)
-  tests/Monitor.Tests/        # 23 golden-file tests over captured /proc fixtures + config tests
-    Fixtures/                 # stat.a/b, netdev.a/b, meminfo, loadavg, uptime (live captures)
+  tests/Monitor.Tests/        # 44 tests: golden-file /proc + cgroup parse, resolver, config, and [2b] event wiring + real-socket integration
+    ServerEventTests.cs       # [2b] fake IEventService wiring + real UnixSocketClient/EventService envelope round-trip
+    Fixtures/                 # stat.a/b, netdev.a/b, meminfo, loadavg, uptime, cgroup.* (live captures)
 ```
 
 ## 9. Snapshot shape (host)
@@ -156,8 +159,10 @@ kgsm-monitor/
 - [x] Extend snapshot: `servers: [{ id, name, kind, cpuPctCore, memBytes, ioReadBps?, ioWriteBps?, pids }]` (always present, empty when none)
 - [x] Wired DI conditionally (`KGSM_MONITOR_KGSM_PATH` set ⇒ per-server on; else host-only). 17 new golden/resolver tests (**40 total, green**); per-server cost measured **48 µs/server** (`bench/BASELINE.md` Slice 2 addendum)
 
-### Slice 2b — event-driven watch-list delta (follow-up)
-- [ ] `EventService` bound to `monitoring.sock` (monitor owns the socket; KGSM connects via `socat`); `Initialize()` + handlers for `instance_started/stopped/removed/uninstalled` → low-latency add/remove on top of the resync floor
+### Slice 2b — event-driven watch-list delta ✅ COMPLETE
+- [x] `EventService` bound to `monitoring.sock` (monitor owns the socket; KGSM connects via `socat`); `Initialize()` + handlers for `instance_started/stopped/removed/uninstalled`. **Design: event = *nudge*, not a partial delta** — the payload carries only `InstanceName` (+`LifecycleManager`), not the cgroup-resolution inputs (compose-file/pid-file/unit), so a true "add" needs a lookup anyway. Each handler instead signals an immediate authoritative `GetAll()` resync, which keeps `_watch` **single-writer** (lock-free volatile swap) and self-heals on the best-effort channel. Latency drops from "≤`ServerResyncMs`" to "sub-second"; the periodic resync stays the floor.
+- [x] Coalescing: `SemaphoreSlim(0,1)` + a single drain loop is the sole `_watch` writer; both the periodic floor and events feed `RequestResync()`. A burst (or event mid-resync) collapses to ≤1 extra resync (a pending `Release` throws `SemaphoreFullException` → swallowed = the coalesce). `EventsEnabled` (`KGSM_MONITOR_EVENTS`, default on) is the kill-switch → resync-only fallback.
+- [x] Tests: 4 new (**44 total, green**) — wiring (fake `IEventService` asserts the four handler types + `Initialize`), event→resync nudge, events-disabled, and a **real-socket integration** test (real `UnixSocketClient`+`EventService` on a temp socket; a hand-written KGSM envelope round-trips through `KgsmJsonContext` → resync). AOT publish still **0 ILC warnings**, 11 MB ELF, 0 `libcoreclr`. Live socket smoke proven (§11).
 - [ ] Re-measure container path + `SourceBenchmarks.Disk` once Docker + a running fleet are present
 
 ### Slice 3 — standalone-native fallback
@@ -201,6 +206,13 @@ kgsm-monitor/
 - **Perf:** host frame **unchanged at 1,610 µs** (server-less path = null-check; no regression). Per-server cgroup read **= 48 µs** against a live cgroup → 100 servers ≈ 4.8 ms ≈ 0.5 % of the 1 s tick. See `bench/BASELINE.md` Slice 2 addendum.
 - **Host-only path (no KGSM) re-verified after the DI change:** `MetricsSampler` now takes `ServerSampler? = null`; with `KGSM_MONITOR_KGSM_PATH` unset, `ServerSampler` is never registered. Ran the AOT binary with no `KGSM_*` vars → started clean (no `Unable to resolve service`), served `servers: []` + 16 cores / 2 mounts / 2 ifaces. The built-in DI container honours the optional-parameter default on the real resolve call-site, not just in the benchmark's direct `new`.
 
+**2026-06-11 — Slice 2b event-driven watch-list delta, Native AOT, live:**
+- **Design:** events *nudge* an authoritative resync rather than apply a partial delta — the payload lacks the cgroup-resolution inputs, so re-listing via the proven `GetAll()` keeps `_watch` single-writer (lock-free swap) and self-heals on the best-effort channel. One `SemaphoreSlim(0,1)` + a single drain loop serialize the periodic floor and event nudges; bursts coalesce to ≤1 extra resync.
+- **Tests:** 4 new (**44 total, green**). The headline is a **real-socket integration test**: a real `UnixSocketClient`+`EventService` on a temp socket, a hand-written `instance_started` envelope pushed over the wire, asserted to round-trip through the source-generated `KgsmJsonContext` and bump an authoritative resync (1→2). Plus socket-free fakes for handler-set wiring, the event→resync nudge, and the events-disabled fallback.
+- **AOT:** `dotnet publish -r linux-x64` → **0 ILC warnings**, 11 MB ELF, **0 `libcoreclr`** — the generic `RegisterHandler<T>` + event deserialization is exactly where a reflection fallback would have hidden; ILC stayed clean.
+- **Live socket smoke (the AOT proof that matters):** ran the published binary with the event socket enabled and `KGSM_MONITOR_KGSM_PATH` pointed at a stub that logs each call + returns `{}`. Both sockets bound; all four handlers registered; the prime resync spawned the stub once. Pushing the envelope via `socat … UNIX-CONNECT:` produced the full chain in the log — `Received event message: 167 bytes` → `Processing event of type instance_started` → `KGSM event for 7dtd; requesting resync` → a **second** `server resync` (stub spawned exactly twice). The `EventWrapper`+`InstanceStartedData` deserialized **under AOT**; a reflection fallback would have thrown `NotSupportedException` at that line.
+- **Validation scope (honest):** this proves the **monitor side** end-to-end (binds the socket, receives a real envelope, deserializes under AOT, nudges a resync). It does **not** exercise the real KGSM→`socat`→monitor path — that needs KGSM's event socket configured (`event_socket_filenames=…,monitoring.sock`) and a real instance operation, since events only fire via `kgsm.sh` (§6). The envelope used is byte-for-byte the documented KGSM wire format (`docs/events.md`).
+
 ## 12. Open questions
 - ~~Socket location/perms for the API consumer~~ → **resolved**: socket chmod `0660` (configurable), unit ships a `Group=kgsm` group-sharing recipe (commented). Final call (root-API vs shared group) is a deploy-time decision.
 - Whether to bump `kgsm-lib` to net10 when Slice 2 lands (optional; net9 consumed fine under AOT — confirmed).
@@ -208,4 +220,6 @@ kgsm-monitor/
 - Per-server **disk-IO is opt-in** (`io.stat` needs `IOAccounting=yes`); the unit should ship an `IOAccounting=yes` recipe (parallel to the `Group=kgsm` recipe) for operators who want it. `memory.current` includes reclaimable page cache (reads higher than RSS); switch to `memory.current − inactive_file` later if users read it as RSS.
 - **Deploy-time (hardened unit) — `ProtectHome=true` vs KGSM's reads:** the spawned `kgsm.sh` inherits the unit's sandbox and reads its *own* config (`~/.config/kgsm` / `$KGSM_ROOT`) + instance files. If any of those resolve under `/home`, every `GetAll()` throws → `Resync` catches → `_watch` stays empty → `servers[]` is **silently empty forever** (a warning logs, but the feature is dead). When enabling per-server on the hardened unit, ensure KGSM's root + instances live outside `/home` (or relax `ProtectHome`). Host-only path is unaffected.
 - **systemd unit-name escaping:** the resolver uses the literal unit name; systemd escapes special chars (`@`, certain `-`) in cgroup dir names. Fine for `7dtd`/`factorio`-style names; an escaped mismatch is a silent stat-and-skip (no crash), but exotic instance names would need `systemd-escape` parity to be sampled.
+- **Slice 2b — a dead event socket is silent.** `EventService.Initialize()` binds on a fire-and-forget `Task.Run` inside the lib, so a bind failure (perms/path/already-in-use) surfaces only as a background `LogError` in `UnixSocketClient`, never to the monitor — the `WireEvents` try/catch only covers the disposal-race paths `Initialize()` itself can throw. Metrics keep working via the resync floor, so a non-binding event socket is indistinguishable from "KGSM isn't pushing events" without reading the lib's logs. The monitor logs `server events: listening on <socket>` on the happy path; absence of new resyncs after an instance op is the only operator-visible symptom. If event reliability ever needs to be observable, the fix belongs in `kgsm-lib` (surface the bind result from `StartListeningAsync`), not here. Set `KGSM_MONITOR_EVENTS=0` to disable the listener entirely and run resync-only.
+- **Slice 2b coalescing is rate-, not count-, bounded:** events that arrive spaced *just longer* than a `GetAll()` spawn takes each trigger their own resync (the signal only coalesces concurrent/overlapping requests). For a fleet-wide restart that's a handful of sub-second spawns — acceptable, and the periodic floor would have done the same work. If a pathological burst ever matters, add a short debounce before the drain-loop `Resync()`.
 - Live `iperf3`/`fio` throughput validation deferred (tools absent); net/disk rate math is covered by golden fixtures for now.

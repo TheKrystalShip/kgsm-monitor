@@ -38,8 +38,9 @@ curl --unix-socket /tmp/kgsm-monitor.sock http://localhost/metrics | jq
 | `KGSM_MONITOR_IFACE_DENY` | `veth` | Comma-separated interface-name prefixes to exclude |
 | `KGSM_MONITOR_MOUNT_FS_DENY` | *(empty)* | Extra fs types to hide (pseudo-fs already filtered) |
 | `KGSM_MONITOR_KGSM_PATH` | *(empty)* | Path to `kgsm.sh`. **Unset ⇒ host-only**; set ⇒ per-server cgroup sampling on |
-| `KGSM_MONITOR_KGSM_SOCKET` | `/run/kgsm-monitoring.sock` | Socket the monitor owns for KGSM events (Slice 2b) |
+| `KGSM_MONITOR_KGSM_SOCKET` | `/run/kgsm-monitoring.sock` | Socket the monitor owns for KGSM lifecycle events (Slice 2b) |
 | `KGSM_MONITOR_RESYNC_MS` | `15000` | How often to re-list KGSM instances (floor 1 s; off the metrics tick) |
+| `KGSM_MONITOR_EVENTS` | `on` | Listen for KGSM events on the socket above (`1/0`, `true/false`, `on/off`). Off ⇒ resync-only |
 
 ### Per-server metrics (Slice 2)
 
@@ -61,6 +62,15 @@ Stopped instances and standalone-native instances (no cgroup; Slice 3) are simpl
 a server appears only when its cgroup exists. Per-server disk-IO requires `IOAccounting=yes`
 on the unit; otherwise the io fields are `null` (not measured ≠ no I/O).
 
+The watch-list refreshes on a slow timer (`KGSM_MONITOR_RESYNC_MS`, off the metrics tick
+since it spawns `kgsm.sh`). **Slice 2b** adds the low-latency half: KGSM pushes lifecycle
+events (`instance_started/stopped/removed/uninstalled`) to the monitor-owned event socket,
+and each one *nudges* an immediate resync — so a freshly-started server shows up in
+sub-second rather than after up to `RESYNC_MS`. Events are best-effort (the periodic resync
+stays the source of truth); set `KGSM_MONITOR_EVENTS=0` to bind nothing and run resync-only.
+KGSM connects via `socat` — wire the emitter by adding `monitoring.sock` to KGSM's
+`event_socket_filenames` (see `src/Monitor/deploy/kgsm-monitor.service` for the recipe).
+
 ## Deploy
 
 `sudo ./deploy/install.sh` publishes the AOT binary to `/opt/kgsm-monitor` and installs the
@@ -77,6 +87,10 @@ self-ticking sampler, env-configurable filters, golden-file tests, measured self
 
 Slice 2a (**per-server cgroups + embedded `kgsm-lib`**) — **complete & AOT-proven**: a
 never-failing resolver + stat-and-skip `CgroupSampler` (cpu/mem/pids, opt-in io) driven by
-an off-tick KGSM instance resync; **40 golden/resolver tests**; per-server read **= 48 µs**
-(100 servers ≈ 0.5 % of the tick). Slice 2b (event-driven watch-list delta) and Slice 3
-(native-standalone process-tree fallback) are next. See **[PLAN.md](PLAN.md)**.
+an off-tick KGSM instance resync; per-server read **= 48 µs** (100 servers ≈ 0.5 % of the tick).
+
+Slice 2b (**event-driven watch-list delta**) — **complete & AOT-proven**: KGSM lifecycle
+events on `monitoring.sock` nudge a coalesced, authoritative resync (single-writer drain
+loop, lock-free swap); **44 tests** incl. a real-socket envelope round-trip through the
+source-generated JSON context; live-proven under AOT (`socat` push → resync). Slice 3
+(native-standalone process-tree fallback) is next. See **[PLAN.md](PLAN.md)**.
