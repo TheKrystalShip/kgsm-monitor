@@ -16,8 +16,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Expose internal pure parse/rate helpers to the golden-file test project. -->
+    <!-- Expose internal pure parse/rate helpers + Build() to test and benchmark projects. -->
     <InternalsVisibleTo Include="Monitor.Tests" />
+    <InternalsVisibleTo Include="Monitor.Benchmarks" />
   </ItemGroup>
 
 </Project>

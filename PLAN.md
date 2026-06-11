@@ -87,6 +87,9 @@ viable. Details in the memory note `system-metrics-monitor`.
 kgsm-monitor/
   kgsm-monitor.slnx
   README.md · PLAN.md · .gitignore
+  bench/
+    BASELINE.md               # committed perf baseline (frame 1.61ms, Disk = 96.9%, judgment)
+    Monitor.Benchmarks/       # BenchmarkDotNet: Frame / per-Source / pure-Parse tiers
   deploy/
     install.sh                # publish + install binary + unit (root; --enable to start)
   src/Monitor/
@@ -172,6 +175,12 @@ kgsm-monitor/
   - The CPU-only self-cost figure is **representative, not partial**: the monitor reads the same fixed set of `/proc`+`/sys` files every tick regardless of load *type*, so its own cost is load-type-independent.
 - **Array integrity post-refactor:** full-body scrape after the deny-list rewiring shows `disk.mounts` = `/` (ext4) + `/boot` (vfat), `net.ifaces` = `enp4s0`+`wlp5s0` (`lo`/pseudo-fs excluded), 16 per-core entries — the empty-array case a `totalPct`/`ts` grep can't catch.
 - **Deploy:** `deploy/install.sh` `bash -n` + shellcheck clean; hardened unit passes `systemd-analyze verify` (only flags the not-yet-installed binary). Not enabled on the host (user action).
+
+**2026-06-11 — Performance baseline (BenchmarkDotNet, full results in `bench/BASELINE.md`):**
+- **Full diagnostic frame = 1.61 ms** (398 KB alloc) → **0.16 % of the 1000 ms tick budget**; ceiling ~620 frames/s (~620× headroom at 1 Hz). Serialize (source-gen JSON) = **1.85 µs** — the scrape is effectively free.
+- **Disk = 96.9 % of the frame** (`DriveInfo.GetDrives()` statvfs + `/sys/block`); every other source 16–58 µs. Pure parse = 0.7 % → frame is **syscall-bound**, so this JIT baseline ≈ the AOT artifact within ~1 % (AOT toolchain run not needed yet).
+- Validity: frame ≈ Σ(sources) on both latency *and* allocation (397.98 KB ≈ 397.85 KB). Levers noted for pushing rate (read `/proc/self/mountinfo` + `statvfs` survivors instead of `DriveInfo` → kills scaling; decouple disk-usage cadence → ~50 µs frame; span-split to cut allocs).
+- ⚠️ **Caveat:** captured on an **idle host (24 mounts)**; Disk cost scales with mount count, which grows with containerized servers — so 1.61 ms is a clean-host floor. **Re-measure `SourceBenchmarks.Disk` in Slice 2** when containers are present. Even 5–10× is ~1 % of the tick, so viability holds; the per-server cgroup reads (~tens of µs each) still leave huge headroom.
 
 ## 12. Open questions
 - ~~Socket location/perms for the API consumer~~ → **resolved**: socket chmod `0660` (configurable), unit ships a `Group=kgsm` group-sharing recipe (commented). Final call (root-API vs shared group) is a deploy-time decision.

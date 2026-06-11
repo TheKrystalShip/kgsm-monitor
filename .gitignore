@@ -7,3 +7,6 @@ artifacts/
 .vs/
 .idea/
 .vscode/
+
+# BenchmarkDotNet output
+BenchmarkDotNet.Artifacts/

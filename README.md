@@ -15,6 +15,9 @@ the slice-by-slice work tracker.
 dotnet build
 dotnet test
 
+# Performance baseline (BenchmarkDotNet) — see bench/BASELINE.md for committed results
+dotnet run -c Release --project bench/Monitor.Benchmarks -- --filter '*'
+
 # Native AOT publish
 dotnet publish src/Monitor/Monitor.csproj -c Release -r linux-x64 -o artifacts/publish
 
@@ -46,5 +49,6 @@ hardened systemd unit (it does **not** start the daemon; pass `--enable` to
 
 Slice 1 (host-only CPU/MEM/DISK/NET over the unix socket) — **complete & AOT-proven**:
 self-ticking sampler, env-configurable filters, 23 golden-file tests, measured self-cost
-≈ 0.02 % of host under full load. Per-server metrics via cgroups + embedded `kgsm-lib` land
-in Slice 2. See **[PLAN.md](PLAN.md)**.
+≈ 0.02 % of host under full load. **Perf baseline:** a full diagnostic frame is **1.61 ms**
+(0.16 % of the 1 s tick; ~620× headroom) — see **[bench/BASELINE.md](bench/BASELINE.md)**.
+Per-server metrics via cgroups + embedded `kgsm-lib` land in Slice 2. See **[PLAN.md](PLAN.md)**.

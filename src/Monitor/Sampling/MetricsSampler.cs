@@ -52,7 +52,7 @@ public sealed class MetricsSampler(ILogger<MetricsSampler> logger, MonitorOption
         }
     }
 
-    private Snapshot Build()
+    internal Snapshot Build()
     {
         var (cpuTotal, perCore) = _cpu.Sample();
         var mem = MemorySource.Read();
