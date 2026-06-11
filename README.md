@@ -6,7 +6,9 @@ snapshot over a unix-socket `GET /metrics`. Designed to feed live dashboards in 
 ecosystem without nuking host resources (it never shells out to `top`/`ps`).
 
 See **[PLAN.md](PLAN.md)** for the full design, decisions, KGSM-integration facts, and
-the slice-by-slice work tracker.
+the slice-by-slice work tracker. **Building a service that consumes the monitor?** Start
+with **[docs/integration.md](docs/integration.md)** — the consumer contract: transport,
+endpoints, the exact JSON shape, what's configurable, and the failure modes to handle.
 
 ## Build & run (local)
 
