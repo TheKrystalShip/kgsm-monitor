@@ -58,9 +58,17 @@ When `KGSM_MONITOR_KGSM_PATH` is set, each frame gains a `servers[]` array — o
 ]
 ```
 
-Stopped instances and standalone-native instances (no cgroup; Slice 3) are simply absent —
-a server appears only when its cgroup exists. Per-server disk-IO requires `IOAccounting=yes`
-on the unit; otherwise the io fields are `null` (not measured ≠ no I/O).
+Stopped instances are simply absent — a systemd/container server appears only when its
+cgroup exists. **Standalone-native** servers (no cgroup) are covered by the **Slice 3**
+process-tree fallback: their `kind` is `"native"`, and CPU/memory/IO are summed from the
+`/proc` tree rooted at the instance `.pid`. Per-server disk-IO for cgroup servers requires
+`IOAccounting=yes` on the unit (otherwise the io fields are `null` — not measured ≠ no I/O);
+native servers read io straight from `/proc` as root, so they need no such flag.
+
+> **Accuracy note (native only):** a process-tree CPU sum can't recover CPU from children
+> that exited between samples (a cgroup counter can), so a server that churns short-lived
+> helpers reads slightly low; summed RSS double-counts pages shared across the tree
+> (overcount vs a cgroup's `memory.current`). Measured-and-labeled, never fabricated.
 
 The watch-list refreshes on a slow timer (`KGSM_MONITOR_RESYNC_MS`, off the metrics tick
 since it spawns `kgsm.sh`). **Slice 2b** adds the low-latency half: KGSM pushes lifecycle
@@ -91,6 +99,12 @@ an off-tick KGSM instance resync; per-server read **= 48 µs** (100 servers ≈ 
 
 Slice 2b (**event-driven watch-list delta**) — **complete & AOT-proven**: KGSM lifecycle
 events on `monitoring.sock` nudge a coalesced, authoritative resync (single-writer drain
-loop, lock-free swap); **44 tests** incl. a real-socket envelope round-trip through the
-source-generated JSON context; live-proven under AOT (`socat` push → resync). Slice 3
-(native-standalone process-tree fallback) is next. See **[PLAN.md](PLAN.md)**.
+loop, lock-free swap); a real-socket envelope round-trip through the source-generated JSON
+context; live-proven under AOT (`socat` push → resync).
+
+Slice 3 (**standalone-native process-tree fallback**) — **complete & AOT-proven**: servers
+with no cgroup are read from the `/proc` ppid tree (one gated scan, summed CPU/RSS/IO, a
+`starttime` PID-recycle guard); **60 tests** total; live-proven under AOT (a busy native
+server read `cpuPctCore≈100`, confirming the `sysconf(_SC_CLK_TCK)` p/invoke under Native
+AOT). Per-native scan ≈ 3.4 ms, flat in native-server count and gated to zero when none
+exist. See **[PLAN.md](PLAN.md)**.

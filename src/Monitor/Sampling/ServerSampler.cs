@@ -16,8 +16,10 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// immutable dictionary and swaps the reference (conflation, same pattern as the host
 /// frame's <c>volatile</c> latest).</item>
 /// <item><b>Sample (fast, the host tick):</b> <see cref="MetricsSampler"/> calls
-/// <see cref="Sample"/> once per tick; it reads the current list reference and reads
-/// each server's cgroup counters (cheap kernel files). No process spawn, no lock.</item>
+/// <see cref="Sample"/> once per tick; it reads the current list reference and reads each
+/// server's counters from cheap kernel files — cgroup files for systemd/container servers
+/// (<see cref="CgroupSampler"/>) and the <c>/proc</c> process tree for native-standalone
+/// servers (<see cref="ProcTreeSampler"/>, Slice 3). No process spawn, no lock.</item>
 /// </list>
 /// </para>
 /// <para>
@@ -44,6 +46,11 @@ public sealed class ServerSampler(
 
     private readonly CgroupSampler _cgroup = new();
 
+    // Slice 3: the standalone-native fallback. Servers with no cgroup (LifecycleManager
+    // Standalone, no compose_file) are invisible to _cgroup; this reads their /proc process
+    // tree instead. It owns a disjoint set of servers, so the two outputs simply concatenate.
+    private readonly ProcTreeSampler _procTree = new();
+
     // Coalescing resync signal. RequestResync() releases it; the single drain loop in
     // ExecuteAsync waits on it and is the ONLY writer of _watch. Max count 1, so a burst
     // of events (or an event landing mid-resync) collapses to a single pending resync —
@@ -55,11 +62,19 @@ public sealed class ServerSampler(
     private volatile IReadOnlyDictionary<string, Instance> _watch = Empty;
 
     /// <summary>
-    /// Read every addressable server's cgroup counters for the current watch-list.
-    /// Called on the host sampling thread; returns an empty array until the first
-    /// resync lands.
+    /// Read every server's metrics for the current watch-list: cgroup counters for the
+    /// cgroup-addressable servers (systemd + container) and the <c>/proc</c> process tree for
+    /// native-standalone servers (Slice 3). The two samplers cover disjoint server kinds, so
+    /// their results concatenate. Called on the host sampling thread; returns an empty array
+    /// until the first resync lands.
     /// </summary>
-    public ServerMetrics[] Sample() => _cgroup.Sample(_watch);
+    public ServerMetrics[] Sample()
+    {
+        var watch = _watch;
+        var cgroup = _cgroup.Sample(watch);
+        var native = _procTree.Sample(watch);
+        return native.Length == 0 ? cgroup : [.. cgroup, .. native];
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

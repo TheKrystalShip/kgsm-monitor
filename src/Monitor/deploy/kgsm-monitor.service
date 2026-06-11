@@ -19,6 +19,8 @@ Environment=KGSM_MONITOR_SOCKET_MODE=660
 # Per-server metrics (Slice 2): point at kgsm.sh to enable cgroup sampling of running
 # instances. Unset = host-only. Use a path OUTSIDE /home (ProtectHome=true below hides
 # /home); the packaged launcher at /usr/local/bin/kgsm is the right target.
+# Standalone-native instances (no cgroup) are covered automatically by the Slice 3 /proc
+# process-tree fallback — no extra config; root (below) is what makes their /proc readable.
 # Environment=KGSM_MONITOR_KGSM_PATH=/usr/local/bin/kgsm
 # Environment=KGSM_MONITOR_KGSM_SOCKET=/run/kgsm-monitor/monitoring.sock
 # Environment=KGSM_MONITOR_RESYNC_MS=15000

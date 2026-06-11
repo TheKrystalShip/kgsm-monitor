@@ -32,6 +32,9 @@ public class SourceBenchmarks
     private readonly CgroupSampler _cgroup = new();
     private Dictionary<string, Instance> _oneServer = new();
 
+    private readonly ProcTreeSampler _procTree = new();
+    private Dictionary<string, Instance> _oneNative = new();
+
     [GlobalSetup]
     public void Setup()
     {
@@ -45,6 +48,12 @@ public class SourceBenchmarks
         // pids.current). Empty dict on hosts with no service cgroups.
         _oneServer = DiscoverOneServiceCgroup();
         _cgroup.Sample(_oneServer); // prime the rate state
+
+        // Slice 3 native path: one native-standalone server whose .pid points at this live
+        // benchmark process. Sample() does the dominant cost — a full /proc stat scan (scales
+        // with host process count, NOT server count) — plus statm/io for the (tiny) own tree.
+        _oneNative = OneNativeForSelf();
+        _procTree.Sample(_oneNative); // prime the rate state
     }
 
     [Benchmark]
@@ -64,6 +73,24 @@ public class SourceBenchmarks
 
     [Benchmark]
     public ServerMetrics[] Server() => _cgroup.Sample(_oneServer);
+
+    [Benchmark]
+    public ServerMetrics[] ServerNative() => _procTree.Sample(_oneNative);
+
+    private static Dictionary<string, Instance> OneNativeForSelf()
+    {
+        string pidFile = Path.Combine(Path.GetTempPath(), $"kgsm-bench-{Environment.ProcessId}.pid");
+        File.WriteAllText(pidFile, Environment.ProcessId.ToString());
+        return new Dictionary<string, Instance>
+        {
+            ["bench-native"] = new Instance
+            {
+                Name = "bench-native",
+                LifecycleManager = LifecycleManager.Standalone, // standalone + no compose_file = native
+                PidFile = pidFile,
+            },
+        };
+    }
 
     private static Dictionary<string, Instance> DiscoverOneServiceCgroup()
     {
