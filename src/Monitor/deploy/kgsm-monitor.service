@@ -1,0 +1,22 @@
+[Unit]
+Description=KGSM Metrics Monitor
+Documentation=https://github.com/TheKrystalShip
+After=network.target
+
+[Service]
+Type=simple
+# Native-AOT single-file binary. Runs as root so it can read /proc/<pid>/io and
+# every cgroup under system.slice (per-server metrics in Slice 2+).
+ExecStart=/opt/kgsm-monitor/kgsm-monitor
+Environment=KGSM_MONITOR_SOCKET=/run/kgsm-monitor/metrics.sock
+RuntimeDirectory=kgsm-monitor
+RuntimeDirectoryMode=0755
+Restart=always
+RestartSec=2
+
+# Modest hardening — the daemon only reads /proc, /sys and (later) cgroups.
+ProtectHome=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

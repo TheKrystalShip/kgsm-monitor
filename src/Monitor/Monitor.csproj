@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Native AOT: small footprint, no JIT, instant start — the daemon must not
+         steal resources from the game servers it watches. -->
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <IsAotCompatible>true</IsAotCompatible>
+
+    <RootNamespace>TheKrystalShip.KGSM.Monitor</RootNamespace>
+    <AssemblyName>kgsm-monitor</AssemblyName>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,9 @@
+bin/
+obj/
+*.user
+[Rr]elease/
+[Dd]ebug/
+artifacts/
+.vs/
+.idea/
+.vscode/
