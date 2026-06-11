@@ -6,25 +6,28 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// Disk usage (per mount, via <see cref="DriveInfo"/>) and aggregate I/O
 /// throughput. Throughput sums whole-disk counters from <c>/sys/block/*/stat</c>
 /// — enumerating <c>/sys/block</c> yields only whole disks, never partitions, so
-/// there is no double-counting. Sectors are 512 bytes by convention.
+/// there is no double-counting. Sectors are 512 bytes by convention. Pseudo
+/// filesystems are always filtered; <paramref name="mountFsDeny"/> hides additional
+/// fs types.
 /// </summary>
-public sealed class DiskSource
+public sealed class DiskSource(IReadOnlySet<string> mountFsDeny)
 {
+    private readonly IReadOnlySet<string> _mountFsDeny = mountFsDeny;
     private long _prevReadSectors, _prevWriteSectors, _prevTicks;
 
     public DiskMetrics Sample()
     {
-        return new DiskMetrics(ReadMounts(), ReadIo());
+        return new DiskMetrics(ReadMounts(_mountFsDeny), ReadIo());
     }
 
-    private static MountUsage[] ReadMounts()
+    private static MountUsage[] ReadMounts(IReadOnlySet<string> deny)
     {
         var mounts = new List<MountUsage>();
         foreach (var d in DriveInfo.GetDrives())
         {
             try
             {
-                if (!d.IsReady || IsPseudoFs(d.DriveFormat))
+                if (!d.IsReady || !IncludeMount(d.DriveFormat, deny))
                     continue;
                 long total = d.TotalSize;
                 if (total <= 0)
@@ -42,6 +45,10 @@ public sealed class DiskSource
         return [.. mounts];
     }
 
+    /// <summary>True if a mount of this fs type should be reported (not pseudo, not denied).</summary>
+    internal static bool IncludeMount(string fmt, IReadOnlySet<string> extraDeny)
+        => !IsPseudoFs(fmt) && !extraDeny.Contains(fmt);
+
     private DiskIo ReadIo()
     {
         long readSectors = 0, writeSectors = 0;
@@ -56,13 +63,9 @@ public sealed class DiskSource
             if (!File.Exists(statPath))
                 continue;
 
-            var f = File.ReadAllText(statPath).Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (f.Length < 7)
-                continue;
-
-            // /sys/block/<dev>/stat: [2]=sectors read, [6]=sectors written
-            readSectors += long.Parse(f[2]);
-            writeSectors += long.Parse(f[6]);
+            var (r, w) = ParseBlockStat(File.ReadAllText(statPath));
+            readSectors += r;
+            writeSectors += w;
         }
 
         long now = Environment.TickCount64;
@@ -75,6 +78,15 @@ public sealed class DiskSource
         _prevTicks = now;
 
         return new DiskIo(Math.Max(0, readBps), Math.Max(0, writeBps));
+    }
+
+    /// <summary>Sectors read/written from a single <c>/sys/block/&lt;dev&gt;/stat</c> line ([2]=read, [6]=written).</summary>
+    internal static (long ReadSectors, long WriteSectors) ParseBlockStat(string statLine)
+    {
+        var f = statLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (f.Length < 7)
+            return (0, 0);
+        return (long.Parse(f[2]), long.Parse(f[6]));
     }
 
     private static bool IsPseudoFs(string fmt) => fmt is

@@ -1,3 +1,5 @@
+using TheKrystalShip.KGSM.Monitor.Model;
+
 namespace TheKrystalShip.KGSM.Monitor.Sampling;
 
 /// <summary>
@@ -7,11 +9,14 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// </summary>
 public static class MemorySource
 {
-    public static Model.MemoryMetrics Read()
+    public static MemoryMetrics Read() => Parse(File.ReadAllText("/proc/meminfo"));
+
+    /// <summary>Pure parse of <c>/proc/meminfo</c> contents — golden-file testable.</summary>
+    internal static MemoryMetrics Parse(string content)
     {
         long total = 0, avail = 0, swapTotal = 0, swapFree = 0;
 
-        foreach (var line in File.ReadLines("/proc/meminfo"))
+        foreach (var line in content.Split('\n'))
         {
             int colon = line.IndexOf(':');
             if (colon < 0)
@@ -33,6 +38,6 @@ public static class MemorySource
         long used = total - avail;
         double usedPct = total > 0 ? Math.Round(100.0 * used / total, 1) : 0.0;
         long swapUsed = swapTotal - swapFree;
-        return new Model.MemoryMetrics(total, avail, used, usedPct, swapTotal, swapUsed);
+        return new MemoryMetrics(total, avail, used, usedPct, swapTotal, swapUsed);
     }
 }

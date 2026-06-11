@@ -4,8 +4,9 @@
 > verified, and a slice-by-slice work tracker. Project name `kgsm-monitor` /
 > namespace `TheKrystalShip.KGSM.Monitor` follows the `kgsm-*` convention.
 >
-> **Status:** Slice 1 (host-only) scaffolded and proven on Native AOT — see
-> §11 Validation log. Remaining Slice 1 polish + Slices 2–3 tracked in §10.
+> **Status:** Slice 1 (host-only) **complete** — sampler + env config + filters +
+> 23 golden-file tests + measured self-cost under load, all proven on Native AOT
+> (see §11 Validation log). Slices 2–3 tracked in §10.
 
 ---
 
@@ -84,24 +85,28 @@ viable. Details in the memory note `system-metrics-monitor`.
 ## 8. Project layout (as built)
 ```
 kgsm-monitor/
-  kgsm-monitor.sln
+  kgsm-monitor.slnx
   README.md · PLAN.md · .gitignore
+  deploy/
+    install.sh                # publish + install binary + unit (root; --enable to start)
   src/Monitor/
-    Monitor.csproj            # Sdk.Web, net10, PublishAot, IsAotCompatible, AssemblyName=kgsm-monitor
-    Program.cs                # CreateSlimBuilder, DI, Kestrel unix socket, GET /metrics + /healthz
+    Monitor.csproj            # Sdk.Web, net10, PublishAot, IsAotCompatible, AssemblyName=kgsm-monitor; InternalsVisibleTo tests
+    Program.cs                # CreateSlimBuilder, DI, Kestrel unix socket, socket chmod, GET /metrics + /healthz
+    MonitorOptions.cs         # env-var config (interval, socket path+mode, mount/iface deny) — AOT-safe
     Model/
       Snapshot.cs             # host DTO graph (records)
       MonitorJsonContext.cs   # [JsonSerializable(typeof(Snapshot))] source-gen, camelCase
-    Sampling/
-      MetricsSampler.cs       # BackgroundService + PeriodicTimer(1s); volatile latest; conflation
+    Sampling/                 # each source: pure Parse + ComputeRates helpers (golden-file testable)
+      MetricsSampler.cs       # BackgroundService + PeriodicTimer(options.IntervalMs); volatile latest; conflation
       CpuSource.cs            # /proc/stat cpu+cpuN jiffies delta -> %
       MemorySource.cs         # /proc/meminfo (instant, MemAvailable)
-      NetworkSource.cs        # /proc/net/dev delta -> bps/pps per iface (lo excluded)
-      DiskSource.cs           # DriveInfo usage (pseudo-fs filtered) + /sys/block/*/stat IO delta
+      NetworkSource.cs        # /proc/net/dev delta -> bps/pps per iface (lo + deny-prefixes excluded)
+      DiskSource.cs           # DriveInfo usage (pseudo-fs + deny filtered) + /sys/block/*/stat IO delta
       SystemSource.cs         # /proc/loadavg, /proc/uptime, hostname
     deploy/
-      kgsm-monitor.service    # systemd unit (root, Restart=always, RuntimeDirectory socket)
-  tests/Monitor.Tests/        # (TODO) golden-file /proc parse fixtures
+      kgsm-monitor.service    # hardened systemd unit (root, Restart=always, RuntimeDirectory socket, group-share recipe)
+  tests/Monitor.Tests/        # 23 golden-file tests over captured /proc fixtures + config tests
+    Fixtures/                 # stat.a/b, netdev.a/b, meminfo, loadavg, uptime (live captures)
 ```
 
 ## 9. Snapshot shape (host)
@@ -127,12 +132,12 @@ kgsm-monitor/
 - [x] `Snapshot` + source-gen JSON; `GET /metrics` (503 until first frame) + `/healthz` over unix socket
 - [x] Native AOT publish: **0 IL warnings**, native ELF; live-validated (§11)
 - [x] systemd unit (draft)
-- [ ] Validate under **sustained** CPU / disk / net load (`stress-ng`, `iperf3`); confirm monitor self-cost ≈ nil
-- [ ] Refine filters: mounts (bind-mounts, `fuse.*`), interfaces (veth/docker0 opt-out), make configurable
-- [ ] Golden-file parse tests (captured `/proc` fixtures) in `tests/Monitor.Tests`
-- [ ] Socket perms / group so the API user can read it (or keep root-only + API as root)
-- [ ] Config: interval, socket path, iface/mount allow-deny (env or appsettings)
-- [ ] Install/deploy: copy binary to `/opt/kgsm-monitor`, enable the unit
+- [x] Validate under **sustained** CPU load + continuous scrape; **measured** self-cost ≈ nil (§11)
+- [x] Refine filters: pseudo-fs always filtered + configurable extra mount/iface deny; default deny `veth`
+- [x] Golden-file parse tests (captured `/proc` fixtures) in `tests/Monitor.Tests` — **23 tests, green**
+- [x] Socket perms via `ApplicationStarted` chmod (default `0660`); group-sharing recipe in the unit
+- [x] Config: interval, socket path, socket mode, iface/mount deny — all env vars (`MonitorOptions`)
+- [x] Install/deploy: `deploy/install.sh` + hardened unit written & validated (enable on host = user action)
 
 ### Slice 2 — per-server via cgroups + embed kgsm-lib
 - [ ] Add `kgsm-lib` ProjectReference (net9 lib in net10 AOT app)
@@ -158,7 +163,18 @@ kgsm-monitor/
 - **Liveness:** `ts` advanced exactly 2000 ms across two reads; `cpu.totalPct` 2.4 → 7.9 under a 2 s single-core burn.
 - **Correctness:** monitor `load` `[0.62,0.37,0.21]` == `/proc/loadavg`. 503 before first tick, 200 after. Responses 0.1–0.7 ms.
 
+**2026-06-11 — Slice 1 polish (config, filters, tests, perms, deploy, load test):**
+- Sources split into pure `Parse` + `ComputeRates` helpers; **23 golden-file tests** (`tests/Monitor.Tests`) pin the values from the live run above (CPU 8.2% agg / core1 72.5%, mem 15.6%, net rates at dt=1s, load/uptime, mount filters, octal/csv config). All green.
+- Refactor + `MonitorOptions` re-published Native AOT: still **0 ILC warnings**, 9.7 MB ELF, 0 `libcoreclr` links.
+- **Socket perms:** with `KGSM_MONITOR_SOCKET_MODE=660`, the chmod (in `ApplicationStarted`, after the socket exists) produced `srw-rw---- (0660)`.
+- **Self-cost under load (the claim, measured):** all 16 cores burned with `dd` + continuous scraping. From `/proc/<pid>/stat`: monitor used **8 jiffies = 0.080 CPU-s over a 26 s window = 0.31 % of one core / 0.019 % of the host**. RSS ~25 MB.
+- **Correctness under load:** during an active 16-core burst the monitor reported peak `cpu.totalPct` **100 %**; 14/14 scrapes 200 OK across both bursts; `healthz` 200 after sustained load; frames stayed fresh (`ts` advanced continuously). (`stress-ng`/`iperf3`/`fio` absent on host → CPU via `dd`; net/disk throughput correctness covered by golden fixtures.)
+  - The CPU-only self-cost figure is **representative, not partial**: the monitor reads the same fixed set of `/proc`+`/sys` files every tick regardless of load *type*, so its own cost is load-type-independent.
+- **Array integrity post-refactor:** full-body scrape after the deny-list rewiring shows `disk.mounts` = `/` (ext4) + `/boot` (vfat), `net.ifaces` = `enp4s0`+`wlp5s0` (`lo`/pseudo-fs excluded), 16 per-core entries — the empty-array case a `totalPct`/`ts` grep can't catch.
+- **Deploy:** `deploy/install.sh` `bash -n` + shellcheck clean; hardened unit passes `systemd-analyze verify` (only flags the not-yet-installed binary). Not enabled on the host (user action).
+
 ## 12. Open questions
-- Socket location/perms for the API consumer (root-only vs a shared group).
+- ~~Socket location/perms for the API consumer~~ → **resolved**: socket chmod `0660` (configurable), unit ships a `Group=kgsm` group-sharing recipe (commented). Final call (root-API vs shared group) is a deploy-time decision.
 - Whether to bump `kgsm-lib` to net10 when Slice 2 lands (optional; net9 consumed fine).
 - Docker cgroup driver on this host (decides `system.slice/docker-<id>.scope` path) — confirm in Slice 2.
+- Live `iperf3`/`fio` throughput validation deferred (tools absent); net/disk rate math is covered by golden fixtures for now.

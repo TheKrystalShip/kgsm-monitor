@@ -8,15 +8,35 @@ Type=simple
 # Native-AOT single-file binary. Runs as root so it can read /proc/<pid>/io and
 # every cgroup under system.slice (per-server metrics in Slice 2+).
 ExecStart=/opt/kgsm-monitor/kgsm-monitor
+
+# Configuration (all optional — these are the defaults made explicit).
 Environment=KGSM_MONITOR_SOCKET=/run/kgsm-monitor/metrics.sock
+Environment=KGSM_MONITOR_SOCKET_MODE=660
+# Environment=KGSM_MONITOR_INTERVAL_MS=1000
+# Environment=KGSM_MONITOR_IFACE_DENY=veth,docker,br-
+# Environment=KGSM_MONITOR_MOUNT_FS_DENY=
+
+# systemd creates /run/kgsm-monitor (owned root:<group>, traversable by the group).
 RuntimeDirectory=kgsm-monitor
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=0750
+
+# To let a non-root KGSM API scrape the socket: create a shared group (e.g. `kgsm`),
+# add the API's user to it, and uncomment the line below. The daemon keeps uid 0
+# (root powers for /proc + cgroups) but the socket is created group=kgsm, mode 0660,
+# so any group member can read it. Left commented so the unit starts without the group.
+# SupplementaryGroups=kgsm
+# Group=kgsm
+
 Restart=always
 RestartSec=2
 
-# Modest hardening — the daemon only reads /proc, /sys and (later) cgroups.
+# Hardening — the daemon only reads /proc, /sys and (later) cgroups, and writes one
+# unix socket under its RuntimeDirectory. /proc and /sys stay readable under all of these.
+ProtectSystem=strict
 ProtectHome=true
+PrivateTmp=true
 NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX
 
 [Install]
 WantedBy=multi-user.target

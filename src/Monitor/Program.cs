@@ -1,7 +1,12 @@
+using TheKrystalShip.KGSM.Monitor;
 using TheKrystalShip.KGSM.Monitor.Model;
 using TheKrystalShip.KGSM.Monitor.Sampling;
 
 var builder = WebApplication.CreateSlimBuilder(args);
+
+// All configuration comes from environment variables (systemd-friendly, AOT-safe).
+var options = MonitorOptions.FromEnvironment();
+builder.Services.AddSingleton(options);
 
 // The sampler is one singleton that is also the hosted background service, so the
 // /metrics endpoint reads the exact instance that is ticking.
@@ -10,16 +15,30 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<MetricsSampler>())
 
 // Server -> client only, and the only consumer is the local KGSM API. Bind a unix
 // domain socket (no exposed TCP port; the socket's filesystem perms are the boundary).
-// Override with KGSM_MONITOR_SOCKET (e.g. for local dev outside /run).
-var socketPath = Environment.GetEnvironmentVariable("KGSM_MONITOR_SOCKET") ?? "/run/kgsm-monitor.sock";
-builder.WebHost.ConfigureKestrel(options =>
+builder.WebHost.ConfigureKestrel(kestrel =>
 {
-    if (File.Exists(socketPath))
-        File.Delete(socketPath);
-    options.ListenUnixSocket(socketPath);
+    if (File.Exists(options.SocketPath))
+        File.Delete(options.SocketPath);
+    kestrel.ListenUnixSocket(options.SocketPath);
 });
 
 var app = builder.Build();
+
+// The socket file only exists once the host has started listening — chmod it here,
+// not before app.Run() (which would hit ENOENT). Default 0660 lets an API process in
+// the socket's group scrape it without exposing the data world-wide.
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    try
+    {
+        if (OperatingSystem.IsLinux() && File.Exists(options.SocketPath))
+            File.SetUnixFileMode(options.SocketPath, options.SocketMode);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "could not set mode on socket {Socket}", options.SocketPath);
+    }
+});
 
 app.MapGet("/healthz", () => Results.Text("ok\n"));
 
@@ -33,5 +52,7 @@ app.MapGet("/metrics", (MetricsSampler sampler) =>
         : Results.Json(snapshot, MonitorJsonContext.Default.Snapshot);
 });
 
-app.Logger.LogInformation("kgsm-monitor listening on unix:{Socket}", socketPath);
+app.Logger.LogInformation(
+    "kgsm-monitor listening on unix:{Socket} (interval {Interval}ms)",
+    options.SocketPath, options.IntervalMs);
 app.Run();

@@ -1,0 +1,82 @@
+namespace TheKrystalShip.KGSM.Monitor;
+
+/// <summary>
+/// Runtime configuration, sourced from environment variables (the idiomatic
+/// mechanism for a systemd daemon — see <c>Environment=</c> in the unit file).
+/// Reading is deliberately reflection-free (no config-binding source generator)
+/// so the daemon stays Native-AOT clean. All knobs have sane defaults; an empty
+/// or unset variable keeps the default.
+/// </summary>
+public sealed class MonitorOptions
+{
+    /// <summary>Sampling cadence in milliseconds. <c>KGSM_MONITOR_INTERVAL_MS</c>.</summary>
+    public int IntervalMs { get; init; } = 1000;
+
+    /// <summary>Unix domain socket to listen on. <c>KGSM_MONITOR_SOCKET</c>.</summary>
+    public string SocketPath { get; init; } = "/run/kgsm-monitor.sock";
+
+    /// <summary>
+    /// Permission bits applied to the socket once it exists. <c>KGSM_MONITOR_SOCKET_MODE</c>
+    /// (octal, e.g. <c>660</c>). Default <c>0660</c> — owner+group read/write, so an API
+    /// process in the socket's group can scrape it without exposing it world-wide.
+    /// </summary>
+    public UnixFileMode SocketMode { get; init; } =
+        UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite;
+
+    /// <summary>
+    /// Extra filesystem types to hide from the mount list, on top of the always-filtered
+    /// pseudo filesystems. <c>KGSM_MONITOR_MOUNT_FS_DENY</c> (comma-separated). Default empty.
+    /// </summary>
+    public IReadOnlySet<string> MountFsDeny { get; init; } = new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Interface-name prefixes to exclude from host network rates, in addition to the
+    /// always-excluded loopback. <c>KGSM_MONITOR_IFACE_DENY</c> (comma-separated).
+    /// Default <c>veth</c>: virtual-ethernet pairs are per-container noise that double-counts
+    /// container traffic in the host aggregate. Operators commonly add <c>docker</c>/<c>br-</c>.
+    /// </summary>
+    public IReadOnlyList<string> IfaceDenyPrefixes { get; init; } = ["veth"];
+
+    public static MonitorOptions FromEnvironment()
+    {
+        static string? Env(string key) => Environment.GetEnvironmentVariable(key);
+
+        var defaults = new MonitorOptions();
+
+        int interval = defaults.IntervalMs;
+        if (int.TryParse(Env("KGSM_MONITOR_INTERVAL_MS"), out int iv) && iv >= 100)
+            interval = iv;
+
+        string socket = Env("KGSM_MONITOR_SOCKET") is { Length: > 0 } s ? s : defaults.SocketPath;
+
+        UnixFileMode mode = defaults.SocketMode;
+        if (Env("KGSM_MONITOR_SOCKET_MODE") is { Length: > 0 } modeStr)
+        {
+            try { mode = (UnixFileMode)Convert.ToInt32(modeStr, 8); }
+            catch (Exception) { /* malformed octal -> keep default */ }
+        }
+
+        return new MonitorOptions
+        {
+            IntervalMs = interval,
+            SocketPath = socket,
+            SocketMode = mode,
+            MountFsDeny = ParseSet(Env("KGSM_MONITOR_MOUNT_FS_DENY")) ?? defaults.MountFsDeny,
+            IfaceDenyPrefixes = ParseList(Env("KGSM_MONITOR_IFACE_DENY")) ?? defaults.IfaceDenyPrefixes,
+        };
+    }
+
+    private static string[]? ParseList(string? csv)
+    {
+        if (string.IsNullOrWhiteSpace(csv))
+            return null;
+        var parts = csv.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length > 0 ? parts : null;
+    }
+
+    private static IReadOnlySet<string>? ParseSet(string? csv)
+    {
+        var list = ParseList(csv);
+        return list is null ? null : new HashSet<string>(list, StringComparer.Ordinal);
+    }
+}

@@ -10,14 +10,14 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// write is a single reference swap (conflation — latest always wins, stale frames
 /// are never queued).
 /// </summary>
-public sealed class MetricsSampler(ILogger<MetricsSampler> logger) : BackgroundService
+public sealed class MetricsSampler(ILogger<MetricsSampler> logger, MonitorOptions options) : BackgroundService
 {
-    private const int IntervalMs = 1000;
+    private readonly int _intervalMs = options.IntervalMs;
 
     // Stateful sources hold the previous counters needed to derive rates.
     private readonly CpuSource _cpu = new();
-    private readonly NetworkSource _net = new();
-    private readonly DiskSource _disk = new();
+    private readonly NetworkSource _net = new(options.IfaceDenyPrefixes);
+    private readonly DiskSource _disk = new(options.MountFsDeny);
 
     private volatile Snapshot? _latest;
 
@@ -31,7 +31,7 @@ public sealed class MetricsSampler(ILogger<MetricsSampler> logger) : BackgroundS
         _net.Sample();
         _disk.Sample();
 
-        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(IntervalMs));
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(_intervalMs));
         try
         {
             while (await timer.WaitForNextTickAsync(stoppingToken))
@@ -62,7 +62,7 @@ public sealed class MetricsSampler(ILogger<MetricsSampler> logger) : BackgroundS
 
         return new Snapshot(
             Ts: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            IntervalMs: IntervalMs,
+            IntervalMs: _intervalMs,
             Hostname: host,
             UptimeSec: uptime,
             Cpu: new CpuMetrics(cpuTotal, perCore, load),

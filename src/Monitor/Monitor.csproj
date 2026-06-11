@@ -15,4 +15,9 @@
     <AssemblyName>kgsm-monitor</AssemblyName>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Expose internal pure parse/rate helpers to the golden-file test project. -->
+    <InternalsVisibleTo Include="Monitor.Tests" />
+  </ItemGroup>
+
 </Project>
