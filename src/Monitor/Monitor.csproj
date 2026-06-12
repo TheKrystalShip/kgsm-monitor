@@ -27,10 +27,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Embedded for Slice 2 (per-server cgroup metrics): the single KGSM chokepoint
-         (instance resync + event watch + resolution metadata). net9 lib is
-         IsAotCompatible; consuming it from this net10 AOT app is a verified pattern. -->
-    <ProjectReference Include="../../../kgsm-lib/kgsm-lib/kgsm-lib.csproj" />
+    <!-- The single KGSM chokepoint (instance resync + event watch + resolution
+         metadata) for Slice 2 per-server cgroup metrics. Consumed as the published
+         NuGet package; the net9 lib is IsAotCompatible, so consuming it from this
+         net10 AOT app is a verified pattern. -->
+    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="1.1.0" />
   </ItemGroup>
 
 </Project>
