@@ -6,9 +6,8 @@ using TheKrystalShip.KGSM.Monitor.Model;
 namespace TheKrystalShip.KGSM.Monitor.Sampling;
 
 /// <summary>
-/// Slice 3 — the <b>standalone-native fallback</b>. A server KGSM runs as a plain
-/// process (<see cref="Core.Models.Enums.LifecycleManager.Standalone"/> with no
-/// <c>compose_file</c>) has no dedicated cgroup, so the cgroup path
+/// Slice 3 — the <b>native fallback</b>. A server KGSM runs as a plain process (native:
+/// no <c>compose_file</c>) has no dedicated cgroup the resolver knows, so the cgroup path
 /// (<see cref="CgroupSampler"/>) cannot see it. This sampler reads the process tree
 /// straight from <c>/proc</c> instead: the instance <c>.pid</c> file gives a root PID, we
 /// invert <c>/proc</c>'s <c>ppid</c> links to collect that PID's whole subtree, and sum each

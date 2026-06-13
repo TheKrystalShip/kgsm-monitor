@@ -1,5 +1,4 @@
 using TheKrystalShip.KGSM.Core.Models;
-using TheKrystalShip.KGSM.Core.Models.Enums;
 using TheKrystalShip.KGSM.Monitor.Sampling;
 
 namespace TheKrystalShip.KGSM.Monitor.Tests;
@@ -78,40 +77,13 @@ public class CgroupSamplerTests
 }
 
 /// <summary>
-/// Resolver maps (lifecycle, is-container) to candidate cgroup paths and never
-/// throws. Existence is not asserted here — that is the sampler's stat-and-skip job.
+/// Resolver maps is-container to candidate cgroup paths and never throws. Existence is
+/// not asserted here — that is the sampler's stat-and-skip job.
 /// </summary>
 public class ServerCgroupResolverTests
 {
     [Fact]
-    public void Systemd_instance_resolves_to_system_slice_unit()
-    {
-        var instance = new Instance
-        {
-            Name = "factorio",
-            LifecycleManager = LifecycleManager.Systemd,
-            SystemdServiceFile = "/etc/systemd/system/factorio.service",
-        };
-
-        var target = ServerCgroupResolver.Resolve(instance);
-
-        Assert.Equal("systemd", target.Kind);
-        Assert.True(target.IsAddressable);
-        Assert.Equal("/sys/fs/cgroup/system.slice/factorio.service", Assert.Single(target.Candidates));
-    }
-
-    [Fact]
-    public void Systemd_without_service_file_falls_back_to_unit_from_name()
-    {
-        var instance = new Instance { Name = "minecraft", LifecycleManager = LifecycleManager.Systemd };
-
-        var target = ServerCgroupResolver.Resolve(instance);
-
-        Assert.Equal("/sys/fs/cgroup/system.slice/minecraft.service", Assert.Single(target.Candidates));
-    }
-
-    [Fact]
-    public void Standalone_container_resolves_to_docker_scope_candidates()
+    public void Container_resolves_to_docker_scope_candidates()
     {
         string pidFile = Path.GetTempFileName();
         try
@@ -120,7 +92,6 @@ public class ServerCgroupResolverTests
             var instance = new Instance
             {
                 Name = "valheim",
-                LifecycleManager = LifecycleManager.Standalone,
                 ComposeFile = "/opt/valheim/docker-compose.yml",
                 PidFile = pidFile,
             };
@@ -144,7 +115,6 @@ public class ServerCgroupResolverTests
         var instance = new Instance
         {
             Name = "ghost",
-            LifecycleManager = LifecycleManager.Standalone,
             ComposeFile = "/opt/ghost/docker-compose.yml",
             PidFile = "/nonexistent/.ghost.pid",
         };
@@ -156,22 +126,14 @@ public class ServerCgroupResolverTests
     }
 
     [Fact]
-    public void Standalone_native_is_not_addressable_deferred_to_slice3()
+    public void Native_is_not_addressable_deferred_to_slice3()
     {
-        var instance = new Instance { Name = "raw", LifecycleManager = LifecycleManager.Standalone };
+        var instance = new Instance { Name = "raw" }; // native: no compose_file
 
         var target = ServerCgroupResolver.Resolve(instance);
 
         Assert.Equal("native", target.Kind);
         Assert.False(target.IsAddressable);
         Assert.Empty(target.Candidates);
-    }
-
-    [Theory]
-    [InlineData("factorio.ini", "factorio.service")]
-    [InlineData("factorio", "factorio.service")]
-    public void UnitFromName_strips_ini_suffix(string name, string expected)
-    {
-        Assert.Equal(expected, ServerCgroupResolver.UnitFromName(name));
     }
 }

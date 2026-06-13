@@ -1,6 +1,5 @@
 using BenchmarkDotNet.Attributes;
 using TheKrystalShip.KGSM.Core.Models;
-using TheKrystalShip.KGSM.Core.Models.Enums;
 using TheKrystalShip.KGSM.Monitor;
 using TheKrystalShip.KGSM.Monitor.Model;
 using TheKrystalShip.KGSM.Monitor.Sampling;
@@ -14,9 +13,9 @@ namespace TheKrystalShip.KGSM.Monitor.Benchmarks;
 /// is the first lever for "how much can we push it".
 /// <para>
 /// <see cref="Server"/> measures the Slice 2 per-server cgroup read against a real
-/// systemd cgroup discovered on the host (the frame benchmark itself runs server-less
-/// — no KGSM instances are running this session — so this is the honest per-server
-/// cost to project across a fleet).
+/// container (docker) cgroup discovered on the host (the frame benchmark itself runs
+/// server-less — no KGSM instances are running this session — so this is the honest
+/// per-server cost to project across a fleet).
 /// </para>
 /// </summary>
 [MemoryDiagnoser]
@@ -43,10 +42,10 @@ public class SourceBenchmarks
         _net.Sample();
         _disk.Sample();
 
-        // Point the cgroup sampler at one real, live systemd service cgroup so the
+        // Point the cgroup sampler at one real, live container (docker) cgroup so the
         // per-server number reflects actual kernel reads (cpu.stat/memory.current/
-        // pids.current). Empty dict on hosts with no service cgroups.
-        _oneServer = DiscoverOneServiceCgroup();
+        // pids.current). Empty dict on hosts with no container cgroups.
+        _oneServer = DiscoverOneContainerCgroup();
         _cgroup.Sample(_oneServer); // prime the rate state
 
         // Slice 3 native path: one native-standalone server whose .pid points at this live
@@ -86,31 +85,36 @@ public class SourceBenchmarks
             ["bench-native"] = new Instance
             {
                 Name = "bench-native",
-                LifecycleManager = LifecycleManager.Standalone, // standalone + no compose_file = native
-                PidFile = pidFile,
+                PidFile = pidFile, // no compose_file = native
             },
         };
     }
 
-    private static Dictionary<string, Instance> DiscoverOneServiceCgroup()
+    private static Dictionary<string, Instance> DiscoverOneContainerCgroup()
     {
         const string slice = "/sys/fs/cgroup/system.slice";
         if (Directory.Exists(slice))
         {
             foreach (var dir in Directory.GetDirectories(slice))
             {
-                if (dir.EndsWith(".service", StringComparison.Ordinal) &&
+                string name = Path.GetFileName(dir);
+                if (name.StartsWith("docker-", StringComparison.Ordinal) &&
+                    name.EndsWith(".scope", StringComparison.Ordinal) &&
                     File.Exists(Path.Combine(dir, "cpu.stat")) &&
                     File.Exists(Path.Combine(dir, "memory.current")))
                 {
-                    string unit = Path.GetFileName(dir);
+                    // The resolver reads the container id from the .pid file and rebuilds the
+                    // docker-<id>.scope candidate, so feed it the id this scope encodes.
+                    string id = name["docker-".Length..^".scope".Length];
+                    string pidFile = Path.Combine(Path.GetTempPath(), $"kgsm-bench-ctr-{Environment.ProcessId}.pid");
+                    File.WriteAllText(pidFile, id);
                     return new Dictionary<string, Instance>
                     {
                         ["bench"] = new Instance
                         {
                             Name = "bench",
-                            LifecycleManager = LifecycleManager.Systemd,
-                            SystemdServiceFile = $"/etc/systemd/system/{unit}",
+                            ComposeFile = "/opt/bench/docker-compose.yml", // is-container signal
+                            PidFile = pidFile,
                         },
                     };
                 }

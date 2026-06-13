@@ -1,5 +1,4 @@
 using TheKrystalShip.KGSM.Core.Models;
-using TheKrystalShip.KGSM.Core.Models.Enums;
 using TheKrystalShip.KGSM.Monitor.Sampling;
 
 namespace TheKrystalShip.KGSM.Monitor.Tests;
@@ -211,15 +210,14 @@ public class ProcTreeSamplerSampleTests : IDisposable
     public void A_watch_list_with_no_native_servers_yields_nothing()
     {
         // Point at a non-existent /proc to prove the cost gate skips the scan entirely: a
-        // systemd-only watch-list must produce no servers and must not throw.
+        // container-only watch-list (no native server) must produce nothing and must not throw.
         var sampler = new ProcTreeSampler("/nonexistent-proc-root");
         var instances = new Dictionary<string, Instance>
         {
-            ["sysd"] = new()
+            ["containerized"] = new()
             {
-                Name = "sysd",
-                LifecycleManager = LifecycleManager.Systemd,
-                SystemdServiceFile = "/etc/systemd/system/sysd.service",
+                Name = "containerized",
+                ComposeFile = "/opt/x/docker-compose.yml", // container -> not a native proc-tree candidate
             },
         };
 
@@ -237,8 +235,7 @@ public class ProcTreeSamplerSampleTests : IDisposable
             [id] = new()
             {
                 Name = id,
-                LifecycleManager = LifecycleManager.Standalone, // native: standalone + no compose_file
-                PidFile = pidFile,
+                PidFile = pidFile, // native: no compose_file
             },
         };
     }

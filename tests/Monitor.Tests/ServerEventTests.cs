@@ -77,7 +77,6 @@ public class ServerEventTests
             await events.FireAsync(new InstanceStartedData
             {
                 InstanceName = "factorio",
-                LifecycleManager = LifecycleManager.Systemd,
             });
 
             Assert.True(
@@ -145,7 +144,7 @@ public class ServerEventTests
             // EventWrapper). This must round-trip through the source-generated KgsmJsonContext.
             await SendEventAsync(socket,
                 """
-                {"EventType":"instance_started","Data":{"InstanceName":"7dtd","LifecycleManager":"systemd"},"Timestamp":"2026-06-11T00:00:00Z","Hostname":"test","KGSMVersion":"1.2.3"}
+                {"EventType":"instance_started","Data":{"InstanceName":"7dtd"},"Timestamp":"2026-06-11T00:00:00Z","Hostname":"test","KGSMVersion":"1.2.3"}
                 """);
 
             Assert.True(

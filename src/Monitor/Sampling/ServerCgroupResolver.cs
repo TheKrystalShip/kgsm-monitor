@@ -1,20 +1,18 @@
 using TheKrystalShip.KGSM.Core.Models;
-using TheKrystalShip.KGSM.Core.Models.Enums;
 
 namespace TheKrystalShip.KGSM.Monitor.Sampling;
 
 /// <summary>
 /// Resolves a KGSM <see cref="Instance"/> to candidate cgroup v2 directories,
-/// keyed on (<see cref="LifecycleManager"/>, is-container). It never throws and
-/// never asserts liveness — it returns a best-guess, ordered candidate set and
-/// lets <see cref="CgroupSampler"/> stat those paths each tick, skipping a server
-/// whose cgroup is absent.
+/// keyed on is-container. It never throws and never asserts liveness — it returns a
+/// best-guess, ordered candidate set and lets <see cref="CgroupSampler"/> stat those
+/// paths each tick, skipping a server whose cgroup is absent.
 /// <para>
-/// That single stat-and-skip collapses three cases into one with zero extra
-/// process spawns: a <em>stopped</em> instance (systemd tears the cgroup down), an
-/// <em>unmatched container path</em> (short-vs-full id, or the <c>cgroupfs</c>
-/// driver instead of <c>systemd</c>), and a <em>native-standalone</em> server
-/// (no cgroup at all — deferred to Slice 3's process-tree sampler).
+/// That single stat-and-skip collapses cases into one with zero extra process
+/// spawns: a <em>stopped</em> container, an <em>unmatched container path</em>
+/// (short-vs-full id, or the <c>cgroupfs</c> driver instead of <c>systemd</c>), and
+/// a <em>native</em> server (no dedicated cgroup the resolver knows — deferred to
+/// Slice 3's process-tree sampler).
 /// </para>
 /// </summary>
 internal static class ServerCgroupResolver
@@ -36,20 +34,9 @@ internal static class ServerCgroupResolver
     /// </summary>
     internal static Target Resolve(Instance instance)
     {
-        // systemd-managed: deterministic unit cgroup under system.slice. Checked first
-        // so a (rare) systemd-managed container still routes to its unit cgroup, which
-        // correctly nests the container runtime beneath it.
-        if (instance.LifecycleManager == LifecycleManager.Systemd)
-        {
-            string unit = !string.IsNullOrEmpty(instance.SystemdUnit)
-                ? instance.SystemdUnit
-                : UnitFromName(instance.Name);
-            return new Target("systemd", [Path.Combine(CgroupRoot, "system.slice", unit)]);
-        }
-
-        // standalone container: the .pid file is overloaded to hold a Docker container
-        // id (a real PID for native instances). compose_file is the verified is-container
-        // signal (PLAN.md §6).
+        // container: the .pid file is overloaded to hold a Docker container id (a real
+        // PID for native instances). compose_file is the verified is-container signal
+        // (PLAN.md §6).
         if (!string.IsNullOrEmpty(instance.ComposeFile))
         {
             string id = ReadFirstLine(instance.PidFile);
@@ -63,19 +50,8 @@ internal static class ServerCgroupResolver
             ]);
         }
 
-        // standalone native: no dedicated cgroup -> Slice 3 (ProcTreeSampler).
+        // native: no dedicated cgroup the resolver knows -> Slice 3 (ProcTreeSampler).
         return new Target("native", []);
-    }
-
-    /// <summary>
-    /// Fallback unit name when the instance config carries no
-    /// <c>systemd_service_file</c>: KGSM names the unit after the instance
-    /// (<c>${instance_name%.ini}.service</c>, PLAN.md §6).
-    /// </summary>
-    internal static string UnitFromName(string name)
-    {
-        string baseName = name.EndsWith(".ini", StringComparison.Ordinal) ? name[..^4] : name;
-        return baseName + ".service";
     }
 
     /// <summary>First non-empty trimmed line of a file, or empty on any error/absence.</summary>

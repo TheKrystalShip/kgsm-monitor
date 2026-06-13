@@ -46,9 +46,9 @@ public sealed class ServerSampler(
 
     private readonly CgroupSampler _cgroup = new();
 
-    // Slice 3: the standalone-native fallback. Servers with no cgroup (LifecycleManager
-    // Standalone, no compose_file) are invisible to _cgroup; this reads their /proc process
-    // tree instead. It owns a disjoint set of servers, so the two outputs simply concatenate.
+    // Slice 3: the native fallback. Servers with no cgroup (native: no compose_file) are
+    // invisible to _cgroup; this reads their /proc process tree instead. It owns a disjoint
+    // set of servers, so the two outputs simply concatenate.
     private readonly ProcTreeSampler _procTree = new();
 
     // Coalescing resync signal. RequestResync() releases it; the single drain loop in
