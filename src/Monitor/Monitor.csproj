@@ -31,7 +31,7 @@
          metadata) for Slice 2 per-server cgroup metrics. Consumed as the published
          NuGet package; the net9 lib is IsAotCompatible, so consuming it from this
          net10 AOT app is a verified pattern. -->
-    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="1.1.0" />
+    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="1.3.0" />
   </ItemGroup>
 
 </Project>
