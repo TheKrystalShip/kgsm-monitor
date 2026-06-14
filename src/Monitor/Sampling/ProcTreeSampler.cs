@@ -6,10 +6,11 @@ using TheKrystalShip.KGSM.Monitor.Model;
 namespace TheKrystalShip.KGSM.Monitor.Sampling;
 
 /// <summary>
-/// Slice 3 — the <b>native fallback</b>. A server KGSM runs as a plain process (native:
-/// no <c>compose_file</c>) has no dedicated cgroup the resolver knows, so the cgroup path
-/// (<see cref="CgroupSampler"/>) cannot see it. This sampler reads the process tree
-/// straight from <c>/proc</c> instead: the instance <c>.pid</c> file gives a root PID, we
+/// Slice 3 — the <b>native fallback</b>. A native server (no <c>compose_file</c>) whose
+/// per-instance cgroup is not live — KGSM emitted no <c>cgroup_path</c> (cgroups disabled or a
+/// pre-Inc-4 KGSM), or the <c>kgsm.slice/&lt;inst&gt;</c> directory does not exist yet — is
+/// invisible to the cgroup path (<see cref="CgroupSampler"/>). This sampler reads the process
+/// tree straight from <c>/proc</c> instead: the instance <c>.pid</c> file gives a root PID, we
 /// invert <c>/proc</c>'s <c>ppid</c> links to collect that PID's whole subtree, and sum each
 /// process's CPU/RSS/IO.
 /// <para>
@@ -90,13 +91,21 @@ internal sealed partial class ProcTreeSampler
         long now = Environment.TickCount64;
         double dt = _prevTicks == 0 ? 1.0 : Math.Max(1, now - _prevTicks) / 1000.0;
 
-        // The only kind this sampler owns is native-standalone. Key on the resolver's
-        // classification (single source of truth) so a broken container — Kind "container",
-        // unaddressable — is NOT misrouted onto the process-tree path.
+        // This sampler owns only native servers WITHOUT a live cgroup. Key on the resolver's
+        // classification (single source of truth): a broken container (Kind "container",
+        // unaddressable) is NOT misrouted here, and — since Inc 4 — a native whose cgroup
+        // (kgsm.slice/<inst>) currently exists is sampled by CgroupSampler, so claiming it here
+        // too would double-count. A native with no live cgroup (cgroups disabled, not yet
+        // adopted, or a pre-Inc-4 KGSM) is exactly what this /proc-tree fallback covers. The
+        // FirstExisting check is the same liveness arbiter CgroupSampler uses, so the two
+        // samplers partition the watch-list with no overlap.
         var natives = new List<KeyValuePair<string, Instance>>();
         foreach (var kv in instances)
-            if (ServerCgroupResolver.Resolve(kv.Value).Kind == "native")
+        {
+            var target = ServerCgroupResolver.Resolve(kv.Value);
+            if (target.Kind == "native" && ServerCgroupResolver.FirstExisting(target.Candidates) is null)
                 natives.Add(kv);
+        }
 
         var seen = new HashSet<string>(natives.Count);
         var result = new List<ServerMetrics>(natives.Count);

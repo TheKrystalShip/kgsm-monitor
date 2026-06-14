@@ -53,9 +53,9 @@ internal sealed class CgroupSampler
         foreach (var (id, instance) in instances)
         {
             var target = ServerCgroupResolver.Resolve(instance);
-            string? dir = FirstExisting(target.Candidates);
+            string? dir = ServerCgroupResolver.FirstExisting(target.Candidates);
             if (dir is null)
-                continue; // stopped / native-standalone / unmatched container path
+                continue; // stopped / native with no live cgroup / unmatched container path
 
             // cpu.stat is the one read that must succeed — it's the rate anchor. If the
             // cgroup is torn down mid-read, skip the server this tick rather than emit junk.
@@ -124,14 +124,6 @@ internal sealed class CgroupSampler
 
         _prevTicks = now;
         return [.. result];
-    }
-
-    private static string? FirstExisting(IReadOnlyList<string> candidates)
-    {
-        for (int i = 0; i < candidates.Count; i++)
-            if (Directory.Exists(candidates[i]))
-                return candidates[i];
-        return null;
     }
 
     private static bool TryReadText(string path, out string content)

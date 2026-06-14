@@ -225,7 +225,7 @@ internal sealed class CountingInstanceService : IInstanceService
 
     public Instance? GetInstanceInfo(string instanceName) => throw new NotImplementedException();
     public InstanceRuntimeStatus? GetInstanceStatus(string instanceName) => throw new NotImplementedException();
-    public Dictionary<string, InstanceRuntimeStatus> GetAllStatuses(bool fast = false) => throw new NotImplementedException();
+    public Dictionary<string, Reading<InstanceRuntimeStatus>> GetAllStatuses(bool fast = false) => throw new NotImplementedException();
     public KgsmResult Install(string blueprintName, string? installDir = null, string? version = null, string? name = null) => throw new NotImplementedException();
     public KgsmResult Uninstall(string instanceName) => throw new NotImplementedException();
     public ICollection<string> GetLogs(string instanceName, int maxLines = 10) => throw new NotImplementedException();
@@ -247,6 +247,8 @@ internal sealed class CountingInstanceService : IInstanceService
     public KgsmResult Save(string instanceName) => throw new NotImplementedException();
     public KgsmResult SendInput(string instanceName, string command) => throw new NotImplementedException();
     public KgsmResult FindConfigPath(string instanceName) => throw new NotImplementedException();
+    public KgsmResult GetInstanceConfigValue(string instanceName, string key) => throw new NotImplementedException();
+    public KgsmResult SetInstanceConfigValue(string instanceName, string key, string value) => throw new NotImplementedException();
     public Task<LogSubscription> SubscribeToLogsAsync(string instanceName, CancellationToken cancellationToken = default) => throw new NotImplementedException();
     public Task<LogSubscription> SubscribeToLogsAsync(string instanceName, LogLevel minimumLogLevel, bool includeRawLines = true, CancellationToken cancellationToken = default) => throw new NotImplementedException();
 }
