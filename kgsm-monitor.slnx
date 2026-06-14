@@ -4,6 +4,7 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Monitor/Monitor.csproj" />
+    <Project Path="src/Monitor.Contracts/Monitor.Contracts.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Monitor.Tests/Monitor.Tests.csproj" />

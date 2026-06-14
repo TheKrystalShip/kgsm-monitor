@@ -1,5 +1,5 @@
 using System.Globalization;
-using TheKrystalShip.KGSM.Monitor.Model;
+using TheKrystalShip.KGSM.Monitor.Contracts;
 
 namespace TheKrystalShip.KGSM.Monitor.Sampling;
 

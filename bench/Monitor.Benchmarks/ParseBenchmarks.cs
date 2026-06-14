@@ -1,5 +1,5 @@
 using BenchmarkDotNet.Attributes;
-using TheKrystalShip.KGSM.Monitor.Model;
+using TheKrystalShip.KGSM.Monitor.Contracts;
 using TheKrystalShip.KGSM.Monitor.Sampling;
 
 namespace TheKrystalShip.KGSM.Monitor.Benchmarks;

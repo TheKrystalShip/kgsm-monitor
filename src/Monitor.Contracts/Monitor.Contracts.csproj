@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Plain records + a source-generated JSON context: no reflection, so this is
+         safe to embed in the Native-AOT monitor (it stays IL2026/IL3050-clean) and is
+         equally usable from the JIT api. -->
+    <IsAotCompatible>true</IsAotCompatible>
+
+    <RootNamespace>TheKrystalShip.KGSM.Monitor.Contracts</RootNamespace>
+    <AssemblyName>TheKrystalShip.KGSM.Monitor.Contracts</AssemblyName>
+
+    <!-- The shared wire contract for the monitor's GET /metrics. Built here (the
+         monitor owns the snapshot shape), packed to the local feed, and consumed by
+         kgsm-api so the DTO graph AND the camelCase JSON cannot drift between the
+         producer (kgsm-monitor) and the consumer (kgsm-api) — a contract break is a
+         compile break, not a silent runtime mismatch. -->
+    <PackageId>TheKrystalShip.KGSM.Monitor.Contracts</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Heisenberg</Authors>
+    <Description>Shared wire contract (the Snapshot DTO graph + its source-generated camelCase System.Text.Json context) for the kgsm-monitor GET /metrics endpoint. Referenced by kgsm-monitor (the producer) and consumed by kgsm-api (the aggregator) so the metrics contract is solid at build time.</Description>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/TheKrystalShip/KGSM-Monitor</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/TheKrystalShip/KGSM-Monitor</RepositoryUrl>
+    <RepositoryType>GitHub</RepositoryType>
+    <NeutralLanguage>en</NeutralLanguage>
+
+    <!-- Ship the XML docs (the records carry the unit/semantics contract) but don't
+         fail the build over members that document themselves. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+</Project>

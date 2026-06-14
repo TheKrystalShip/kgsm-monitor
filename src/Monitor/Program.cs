@@ -1,6 +1,6 @@
 using TheKrystalShip.KGSM.Extensions;
 using TheKrystalShip.KGSM.Monitor;
-using TheKrystalShip.KGSM.Monitor.Model;
+using TheKrystalShip.KGSM.Monitor.Contracts;
 using TheKrystalShip.KGSM.Monitor.Sampling;
 
 var builder = WebApplication.CreateSlimBuilder(args);

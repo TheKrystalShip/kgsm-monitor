@@ -27,6 +27,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The shared GET /metrics wire contract (Snapshot graph + source-gen JSON). The
+         monitor owns the shape and references it by project so a contract change is a
+         compile break here; the same source is packed and consumed by kgsm-api. -->
+    <ProjectReference Include="..\Monitor.Contracts\Monitor.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The single KGSM chokepoint (instance resync + event watch + resolution
          metadata) for Slice 2 per-server cgroup metrics. Consumed as the published
          NuGet package; the net9 lib is IsAotCompatible, so consuming it from this

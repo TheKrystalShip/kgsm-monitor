@@ -103,13 +103,14 @@ kgsm-monitor/
     Monitor.Benchmarks/       # BenchmarkDotNet: Frame / per-Source / pure-Parse tiers
   deploy/
     install.sh                # publish + install binary + unit (root; --enable to start)
+  src/Monitor.Contracts/      # SHARED GET /metrics wire contract (its own packable project)
+    Monitor.Contracts.csproj  # Sdk classlib, net10, IsAotCompatible; PackageId TheKrystalShip.KGSM.Monitor.Contracts
+    Snapshot.cs               # host DTO graph (records) — namespace TheKrystalShip.KGSM.Monitor.Contracts
+    MonitorJsonContext.cs     # public [JsonSerializable(typeof(Snapshot))] source-gen, camelCase — shipped with the contract
   src/Monitor/
-    Monitor.csproj            # Sdk.Web, net10, PublishAot, IsAotCompatible, AssemblyName=kgsm-monitor; InternalsVisibleTo tests
+    Monitor.csproj            # Sdk.Web, net10, PublishAot, IsAotCompatible, AssemblyName=kgsm-monitor; ProjectReference -> Monitor.Contracts; InternalsVisibleTo tests
     Program.cs                # CreateSlimBuilder, DI, Kestrel unix socket, socket chmod, GET /metrics + /healthz
     MonitorOptions.cs         # env-var config (interval, socket path+mode, mount/iface deny) — AOT-safe
-    Model/
-      Snapshot.cs             # host DTO graph (records)
-      MonitorJsonContext.cs   # [JsonSerializable(typeof(Snapshot))] source-gen, camelCase
     Sampling/                 # each source: pure Parse + ComputeRates helpers (golden-file testable)
       MetricsSampler.cs       # BackgroundService + PeriodicTimer(options.IntervalMs); volatile latest; conflation; optional ServerSampler
       CpuSource.cs            # /proc/stat cpu+cpuN jiffies delta -> %
@@ -130,6 +131,15 @@ kgsm-monitor/
 ```
 
 ## 9. Snapshot shape (host)
+> **Shared as a package (the contract, build-time-solid).** The `Snapshot` graph + its
+> source-gen camelCase `MonitorJsonContext` live in **`src/Monitor.Contracts/`** and ship as
+> **`TheKrystalShip.KGSM.Monitor.Contracts`** (packed to the local feed). The monitor
+> references it by project (so a shape change is a compile break here) and serializes
+> `GET /metrics` with its context; **kgsm-api consumes the same package and deserializes with
+> the same context** — the wire shape and naming cannot drift between producer and consumer.
+> ⚠ **Drift rule:** NuGet caches by `id+version`, so any contract change MUST bump the package
+> `Version` (and every consumer's `<PackageReference>`); a same-version repack is silently
+> served stale. Loop: edit → bump `Version` → `dotnet pack -c Release -o /home/heisen/local-nuget`.
 ```jsonc
 {
   "ts": 1781184473162, "intervalMs": 1000, "hostname": "...", "uptimeSec": 182285,

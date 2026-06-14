@@ -1,7 +1,7 @@
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Events;
-using TheKrystalShip.KGSM.Monitor.Model;
+using TheKrystalShip.KGSM.Monitor.Contracts;
 
 namespace TheKrystalShip.KGSM.Monitor.Sampling;
 

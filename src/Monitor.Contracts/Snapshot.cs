@@ -1,4 +1,4 @@
-namespace TheKrystalShip.KGSM.Monitor.Model;
+namespace TheKrystalShip.KGSM.Monitor.Contracts;
 
 /// <summary>
 /// One host metrics frame. Produced by the sampler once per tick and served
