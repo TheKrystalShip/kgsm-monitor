@@ -62,7 +62,7 @@ The monitor listens on a **unix domain socket** speaking ordinary **HTTP/1.1**. 
 
 ```bash
 curl --unix-socket /run/kgsm-monitor.sock http://localhost/metrics | jq
-curl --unix-socket /run/kgsm-monitor.sock http://localhost/healthz   # -> ok (text/plain, "ok\n")
+curl --unix-socket /run/kgsm-monitor.sock http://localhost/health    # -> ok (text/plain, "ok\n")
 ```
 
 The hostname in the URL is ignored — only the path matters. Any host works.
@@ -249,13 +249,13 @@ So: `null` io ⇒ a cgroup server without `IOAccounting=yes`. Render it as "—"
 | Method + path | Success | Body | Notes |
 |---|---|---|---|
 | `GET /metrics` | `200` | the JSON frame (§3) | `503` until the first tick lands — see below. |
-| `GET /healthz` | `200` | `ok\n` (text/plain) | Liveness only. Returns `200` even before the first frame. |
+| `GET /health` | `200` | `ok\n` (text/plain) | Liveness/availability. Returns `200` even before the first frame. |
 
 - **Only `GET` is mapped.** Other methods → `405`; other paths → `404`.
 - **`503 Service Unavailable` on `/metrics`** means the daemon is up but hasn't completed
   its first sample yet (a sub-second window right after start). **Handle it:** retry after
-  ~`intervalMs`. Don't treat it as fatal. `/healthz` is already `200` in this window, so
-  use `/metrics` 503-vs-200 — not `/healthz` — to gate "metrics ready."
+  ~`intervalMs`. Don't treat it as fatal. `/health` is already `200` in this window, so
+  use `/metrics` 503-vs-200 — not `/health` — to gate "metrics ready."
 - **No auth, no query params, no request body.** Anything you send beyond the path+method
   is ignored. The endpoint is a pure read.
 
@@ -324,7 +324,7 @@ There is **no version field** in the payload today. The compatibility model is t
 | `connect: No such file or directory` | Monitor not started, or wrong `KGSM_MONITOR_SOCKET` path | Confirm the daemon is up and the path matches its env. |
 | `connect: Permission denied` | Your user isn't owner/group of the `0660` socket | Add your user to the socket's group (`Group=` recipe in the unit). |
 | `GET /metrics` → `503` | Up, but pre-first-tick | Retry after ~`intervalMs`; not fatal. |
-| `404` / `405` | Wrong path or method | Only `GET /metrics` and `GET /healthz` exist. |
+| `404` / `405` | Wrong path or method | Only `GET /metrics` and `GET /health` exist. |
 | `servers: []` forever | Host-only mode (no `KGSM_MONITOR_KGSM_PATH`) | Expected; see §6. |
 | `servers: []` intermittently | No instances currently running | Expected; servers come and go. |
 | `ioReadBps`/`ioWriteBps` = `null` | cgroup server without `IOAccounting=yes` | Render "n/a", not 0. |

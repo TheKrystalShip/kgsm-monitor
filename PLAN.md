@@ -109,7 +109,7 @@ kgsm-monitor/
     MonitorJsonContext.cs     # public [JsonSerializable(typeof(Snapshot))] source-gen, camelCase — shipped with the contract
   src/Monitor/
     Monitor.csproj            # Sdk.Web, net10, PublishAot, IsAotCompatible, AssemblyName=kgsm-monitor; ProjectReference -> Monitor.Contracts; InternalsVisibleTo tests
-    Program.cs                # CreateSlimBuilder, DI, Kestrel unix socket, socket chmod, GET /metrics + /healthz
+    Program.cs                # CreateSlimBuilder, DI, Kestrel unix socket, socket chmod, GET /metrics + /health
     MonitorOptions.cs         # env-var config (interval, socket path+mode, mount/iface deny) — AOT-safe
     Sampling/                 # each source: pure Parse + ComputeRates helpers (golden-file testable)
       MetricsSampler.cs       # BackgroundService + PeriodicTimer(options.IntervalMs); volatile latest; conflation; optional ServerSampler
@@ -159,7 +159,8 @@ kgsm-monitor/
 - [x] CPU (`/proc/stat`, aggregate + per-core), Memory (`/proc/meminfo`)
 - [x] Network (`/proc/net/dev` rates), Disk usage (`DriveInfo`) + IO (`/sys/block/*/stat`)
 - [x] Load / uptime / hostname
-- [x] `Snapshot` + source-gen JSON; `GET /metrics` (503 until first frame) + `/healthz` over unix socket
+- [x] `Snapshot` + source-gen JSON; `GET /metrics` (503 until first frame) + `/health` over unix socket
+      (the unified ecosystem liveness/availability path — renamed from `/healthz` 2026-06-15)
 - [x] Native AOT publish: **0 IL warnings**, native ELF; live-validated (§11)
 - [x] systemd unit (draft)
 - [x] Validate under **sustained** CPU load + continuous scrape; **measured** self-cost ≈ nil (§11)
@@ -208,7 +209,7 @@ kgsm-monitor/
 - Refactor + `MonitorOptions` re-published Native AOT: still **0 ILC warnings**, 9.7 MB ELF, 0 `libcoreclr` links.
 - **Socket perms:** with `KGSM_MONITOR_SOCKET_MODE=660`, the chmod (in `ApplicationStarted`, after the socket exists) produced `srw-rw---- (0660)`.
 - **Self-cost under load (the claim, measured):** all 16 cores burned with `dd` + continuous scraping. From `/proc/<pid>/stat`: monitor used **8 jiffies = 0.080 CPU-s over a 26 s window = 0.31 % of one core / 0.019 % of the host**. RSS ~25 MB.
-- **Correctness under load:** during an active 16-core burst the monitor reported peak `cpu.totalPct` **100 %**; 14/14 scrapes 200 OK across both bursts; `healthz` 200 after sustained load; frames stayed fresh (`ts` advanced continuously). (`stress-ng`/`iperf3`/`fio` absent on host → CPU via `dd`; net/disk throughput correctness covered by golden fixtures.)
+- **Correctness under load:** during an active 16-core burst the monitor reported peak `cpu.totalPct` **100 %**; 14/14 scrapes 200 OK across both bursts; `/health` 200 after sustained load; frames stayed fresh (`ts` advanced continuously). (`stress-ng`/`iperf3`/`fio` absent on host → CPU via `dd`; net/disk throughput correctness covered by golden fixtures.)
   - The CPU-only self-cost figure is **representative, not partial**: the monitor reads the same fixed set of `/proc`+`/sys` files every tick regardless of load *type*, so its own cost is load-type-independent.
 - **Array integrity post-refactor:** full-body scrape after the deny-list rewiring shows `disk.mounts` = `/` (ext4) + `/boot` (vfat), `net.ifaces` = `enp4s0`+`wlp5s0` (`lo`/pseudo-fs excluded), 16 per-core entries — the empty-array case a `totalPct`/`ts` grep can't catch.
 - **Deploy:** `deploy/install.sh` `bash -n` + shellcheck clean; hardened unit passes `systemd-analyze verify` (only flags the not-yet-installed binary). Not enabled on the host (user action).

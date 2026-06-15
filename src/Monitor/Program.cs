@@ -51,7 +51,10 @@ app.Lifetime.ApplicationStarted.Register(() =>
     }
 });
 
-app.MapGet("/healthz", () => Results.Text("ok\n"));
+// Unified ecosystem liveness/readiness probe: 200 ⇒ the metrics service is up and able
+// to serve (an empty/warming snapshot is still "available" — the no-fresh-frame state lives
+// on /metrics 503, never here). Any non-200/no-answer ⇒ unavailable. Renamed from /healthz.
+app.MapGet("/health", () => Results.Text("ok\n"));
 
 // Consumer-agnostic scrape: return the latest precomputed frame (conflated). 503
 // until the first tick lands.
