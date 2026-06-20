@@ -18,6 +18,11 @@
 > live is sampled by `CgroupSampler` and the `/proc` tree is the fallback only for
 > natives with no live cgroup (partition arbiter = `ServerCgroupResolver.FirstExisting`,
 > so each server is sampled by exactly one path). See §11 Validation log.
+>
+> **Logging** follows the ecosystem convention (`../logging-convention.md`):
+> `Microsoft.Extensions.Logging` → `AddSystemdConsole()` (journald `<N>` priority prefix),
+> levels from `appsettings.json` `Logging` + env (`Logging__LogLevel__Default`, default
+> `Information`). The `CreateSlimBuilder` host binds the section explicitly via `AddConfiguration`.
 
 ---
 
