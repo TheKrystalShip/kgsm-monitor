@@ -9,9 +9,10 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// (e.g. <c>veth</c>). Host-level only — per-server network is intentionally out of
 /// scope (needs eBPF; see PLAN.md). Parse and rate math are pure static helpers.
 /// </summary>
-public sealed class NetworkSource(IReadOnlyList<string> denyPrefixes)
+public sealed class NetworkSource(IReadOnlyList<string> denyPrefixes, string netRoot = "/sys/class/net")
 {
     private readonly IReadOnlyList<string> _deny = denyPrefixes;
+    private readonly string _netRoot = netRoot;
 
     // name -> [rxBytes, rxPackets, txBytes, txPackets]
     private Dictionary<string, long[]> _prev = new();
@@ -25,9 +26,18 @@ public sealed class NetworkSource(IReadOnlyList<string> denyPrefixes)
         var cur = Parse(File.ReadAllText("/proc/net/dev"));
         var metrics = ComputeRates(_prev, cur, dt, _deny);
 
+        // Enrich each surviving interface with its static MAC + cumulative error count
+        // from /sys/class/net/<if>/ — kept out of the pure rate math (it reads the
+        // filesystem, not the counter snapshots).
+        var enriched = Array.ConvertAll(metrics.Ifaces, i => i with
+        {
+            Mac = ReadMac(_netRoot, i.Name),
+            Errors = ReadErrors(_netRoot, i.Name),
+        });
+
         _prev = cur;
         _prevTicks = now;
-        return metrics;
+        return new NetworkMetrics(enriched);
     }
 
     /// <summary>Parse <c>/proc/net/dev</c> into <c>name -> [rxBytes, rxPackets, txBytes, txPackets]</c>.</summary>
@@ -68,12 +78,16 @@ public sealed class NetworkSource(IReadOnlyList<string> denyPrefixes)
             if (prev.TryGetValue(name, out var p))
             {
                 var c = kv.Value;
+                // Mac/Errors are enriched in Sample() (filesystem reads, not counter math),
+                // so the pure rate helper leaves them null.
                 ifaces.Add(new InterfaceRate(
                     name,
                     RxBps: (long)((c[0] - p[0]) / dt),
                     TxBps: (long)((c[2] - p[2]) / dt),
                     RxPps: (long)((c[1] - p[1]) / dt),
-                    TxPps: (long)((c[3] - p[3]) / dt)));
+                    TxPps: (long)((c[3] - p[3]) / dt),
+                    Mac: null,
+                    Errors: null));
             }
         }
 
@@ -86,5 +100,38 @@ public sealed class NetworkSource(IReadOnlyList<string> denyPrefixes)
             if (name.StartsWith(prefixes[i], StringComparison.Ordinal))
                 return true;
         return false;
+    }
+
+    /// <summary>MAC from <c>/sys/class/net/&lt;if&gt;/address</c>; <c>null</c> when unreadable.</summary>
+    internal static string? ReadMac(string netRoot, string iface)
+    {
+        string? mac = ReadTrimmed(Path.Combine(netRoot, iface, "address"));
+        return string.IsNullOrEmpty(mac) ? null : mac;
+    }
+
+    /// <summary>
+    /// Total link errors = <c>statistics/rx_errors</c> + <c>tx_errors</c>. <c>null</c> only when
+    /// <em>neither</em> file reads — a single readable side still yields a measured total, and a
+    /// genuine zero stays 0 (never conflated with "unknown").
+    /// </summary>
+    internal static long? ReadErrors(string netRoot, string iface)
+    {
+        long? rx = ReadLong(Path.Combine(netRoot, iface, "statistics", "rx_errors"));
+        long? tx = ReadLong(Path.Combine(netRoot, iface, "statistics", "tx_errors"));
+        if (rx is null && tx is null)
+            return null;
+        return (rx ?? 0) + (tx ?? 0);
+    }
+
+    private static long? ReadLong(string path)
+    {
+        string? s = ReadTrimmed(path);
+        return long.TryParse(s, out long v) ? v : null;
+    }
+
+    private static string? ReadTrimmed(string path)
+    {
+        try { return File.Exists(path) ? File.ReadAllText(path).Trim() : null; }
+        catch { return null; }
     }
 }

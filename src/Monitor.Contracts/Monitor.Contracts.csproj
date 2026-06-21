@@ -19,7 +19,7 @@
          producer (kgsm-monitor) and the consumer (kgsm-api) — a contract break is a
          compile break, not a silent runtime mismatch. -->
     <PackageId>TheKrystalShip.KGSM.Monitor.Contracts</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>Heisenberg</Authors>
     <Description>Shared wire contract (the Snapshot DTO graph + its source-generated camelCase System.Text.Json context) for the kgsm-monitor GET /metrics endpoint. Referenced by kgsm-monitor (the producer) and consumed by kgsm-api (the aggregator) so the metrics contract is solid at build time.</Description>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>

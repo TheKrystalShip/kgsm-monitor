@@ -4,7 +4,10 @@ namespace TheKrystalShip.KGSM.Monitor.Tests;
 internal static class Fixtures
 {
     private static readonly string Dir =
-        Path.Combine(AppContext.BaseDirectory, "Fixtures");
+        System.IO.Path.Combine(AppContext.BaseDirectory, "Fixtures");
 
-    public static string Read(string name) => File.ReadAllText(Path.Combine(Dir, name));
+    public static string Read(string name) => File.ReadAllText(System.IO.Path.Combine(Dir, name));
+
+    /// <summary>Absolute path of a fixture file or subtree (for the injectable <c>/sys</c> + <c>/proc</c> roots).</summary>
+    public static string Path(string relative) => System.IO.Path.Combine(Dir, relative);
 }

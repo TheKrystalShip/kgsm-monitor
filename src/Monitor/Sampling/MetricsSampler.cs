@@ -21,6 +21,10 @@ public sealed class MetricsSampler(
     private readonly CpuSource _cpu = new();
     private readonly NetworkSource _net = new(options.IfaceDenyPrefixes);
     private readonly DiskSource _disk = new(options.MountFsDeny);
+    private readonly SensorSource _sensors = new();
+
+    // Static CPU identity — read once (it doesn't change) and reused on every frame.
+    private readonly CpuInfo _cpuInfo = CpuInfoSource.Read();
 
     // Per-server cgroup sampler — null when KGSM integration is unconfigured (the
     // monitor then runs host-only and the servers array is always empty).
@@ -72,10 +76,11 @@ public sealed class MetricsSampler(
             IntervalMs: _intervalMs,
             Hostname: host,
             UptimeSec: uptime,
-            Cpu: new CpuMetrics(cpuTotal, perCore, load),
+            Cpu: new CpuMetrics(cpuTotal, perCore, load, _cpuInfo),
             Mem: mem,
             Disk: disk,
             Net: net,
+            Sensors: _sensors.Sample(),
             Servers: _servers?.Sample() ?? []);
     }
 }

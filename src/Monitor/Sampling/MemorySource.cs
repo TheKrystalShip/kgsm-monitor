@@ -14,7 +14,7 @@ public static class MemorySource
     /// <summary>Pure parse of <c>/proc/meminfo</c> contents — golden-file testable.</summary>
     internal static MemoryMetrics Parse(string content)
     {
-        long total = 0, avail = 0, swapTotal = 0, swapFree = 0;
+        long total = 0, avail = 0, swapTotal = 0, swapFree = 0, cached = 0, buffers = 0;
 
         foreach (var line in content.Split('\n'))
         {
@@ -33,11 +33,15 @@ public static class MemorySource
             else if (key.SequenceEqual("MemAvailable")) avail = val;
             else if (key.SequenceEqual("SwapTotal")) swapTotal = val;
             else if (key.SequenceEqual("SwapFree")) swapFree = val;
+            // Cached/Buffers are mapped verbatim — SReclaimable is deliberately NOT folded
+            // into Cached (some tools do; we report the raw /proc/meminfo values).
+            else if (key.SequenceEqual("Cached")) cached = val;
+            else if (key.SequenceEqual("Buffers")) buffers = val;
         }
 
         long used = total - avail;
         double usedPct = total > 0 ? Math.Round(100.0 * used / total, 1) : 0.0;
         long swapUsed = swapTotal - swapFree;
-        return new MemoryMetrics(total, avail, used, usedPct, swapTotal, swapUsed);
+        return new MemoryMetrics(total, avail, used, usedPct, swapTotal, swapUsed, cached, buffers);
     }
 }

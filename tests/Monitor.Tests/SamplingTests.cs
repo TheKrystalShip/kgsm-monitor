@@ -61,6 +61,28 @@ public class MemorySourceTests
         Assert.Equal(0, mem.SwapTotalKb);
         Assert.Equal(0, mem.SwapUsedKb);
     }
+
+    [Fact]
+    public void Parse_maps_cached_and_buffers_verbatim()
+    {
+        // Slice-1 diagnostics: Cached/Buffers come straight from the same fixture.
+        var mem = MemorySource.Parse(Fixtures.Read("meminfo.txt"));
+
+        Assert.Equal(22911024, mem.CachedKb);   // /proc/meminfo Cached line
+        Assert.Equal(1002928, mem.BuffersKb);    // /proc/meminfo Buffers line
+    }
+
+    [Fact]
+    public void Parse_does_not_fold_SReclaimable_into_Cached()
+    {
+        // The honesty guard: the fixture has Cached=22911024 and SReclaimable=782004.
+        // Some tools report Cached+SReclaimable; we map Cached verbatim, so the reported
+        // value must be the bare Cached line, never the sum.
+        var mem = MemorySource.Parse(Fixtures.Read("meminfo.txt"));
+
+        Assert.Equal(22911024, mem.CachedKb);
+        Assert.NotEqual(22911024 + 782004, mem.CachedKb);
+    }
 }
 
 public class NetworkSourceTests
