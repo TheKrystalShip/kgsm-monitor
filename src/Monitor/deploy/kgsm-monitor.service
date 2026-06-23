@@ -5,71 +5,55 @@ After=network.target
 
 [Service]
 Type=simple
-# Native-AOT single-file binary. Runs as root so it can read /proc/<pid>/io and
-# every cgroup under system.slice (per-server metrics in Slice 2+).
+# Runs as the KGSM user, NOT root. The monitor only READS: cgroup v2 counters (the
+# per-instance cgroups under kgsm.slice are world-readable; kgsm-watchdog — the peer —
+# OWNS and creates them), this user's /proc, and /sys. It also spawns kgsm.sh, which MUST
+# run as the KGSM user to enumerate that user's instances. uid/gid 1000 = the KGSM user,
+# matching kgsm-watchdog's KGSM_WATCHDOG_UID/GID. Adjust both lines for a different host.
+User=heisen
+Group=heisen
+
+# Native-AOT single-file binary (publish: dotnet publish src/Monitor -c Release -r linux-x64).
 ExecStart=/opt/kgsm-monitor/kgsm-monitor
 
-# Configuration (all optional — these are the defaults made explicit).
+# The scrape socket the API reads. Lives inside the RuntimeDirectory (below), created by
+# systemd owned by this user, so a co-located API running as the same user can read it.
 Environment=KGSM_MONITOR_SOCKET=/run/kgsm-monitor/metrics.sock
 Environment=KGSM_MONITOR_SOCKET_MODE=660
-# Environment=KGSM_MONITOR_INTERVAL_MS=1000
-# Environment=KGSM_MONITOR_IFACE_DENY=veth,docker,br-
-# Environment=KGSM_MONITOR_MOUNT_FS_DENY=
 
-# Per-server metrics (Slice 2): point at kgsm.sh to enable cgroup sampling of running
-# instances. Unset = host-only. Use a path OUTSIDE /home (ProtectHome=true below hides
-# /home); the packaged launcher at /usr/local/bin/kgsm is the right target.
-# Standalone-native instances (no cgroup) are covered automatically by the Slice 3 /proc
-# process-tree fallback — no extra config; root (below) is what makes their /proc readable.
-# Environment=KGSM_MONITOR_KGSM_PATH=/usr/local/bin/kgsm
-# Environment=KGSM_MONITOR_KGSM_SOCKET=/run/kgsm-monitor/monitoring.sock
-# Environment=KGSM_MONITOR_RESYNC_MS=15000
-#
-# Slice 2b — event-driven watch-list delta. The monitor BINDS KGSM_MONITOR_KGSM_SOCKET and
-# KGSM connects to it (via `socat`) to push instance lifecycle events, so a started/stopped/
-# removed server is reflected sub-second instead of waiting up to RESYNC_MS. The periodic
-# resync stays the source of truth, so this is purely a latency win. Set KGSM_MONITOR_EVENTS=0
-# to bind no event socket and run resync-only (default is on whenever KGSM_MONITOR_KGSM_PATH
-# is set).
-# Environment=KGSM_MONITOR_EVENTS=1
-#
-# KGSM creates/addresses all event sockets under $KGSM_ROOT, so the monitor must bind the
-# SAME absolute path KGSM will connect to — point KGSM_MONITOR_KGSM_SOCKET at
-# $KGSM_ROOT/monitoring.sock (a dir both this unit and KGSM can reach; mind ProtectHome
-# below if $KGSM_ROOT is under /home). Then, in KGSM's config (config.ini), enable the
-# Unix-socket transport and add the monitor's filename to the broadcast list:
-#   enable_socket_events=true
-#   event_socket_filenames=kgsm.sock,monitoring.sock      # (or: kgsm.sh events socket enable)
-# Requires `socat` on the host. A non-binding event socket is silent — metrics still flow
-# via resync, so absence of fresh resyncs after an instance op is the only symptom (PLAN §12).
-#
-# Per-server disk-IO is opt-in: io.stat only exists when the io controller is accounted
-# for the server's cgroup. To get ioReadBps/ioWriteBps instead of null, set
-# `IOAccounting=yes` on each KGSM *game-server* unit (not this one) — e.g. a drop-in
-#   [Service]
-#   IOAccounting=yes
-# CPU/memory/pids need no such flag (always accounted under cgroup v2).
+# Per-server sampling ON: point at the CANONICAL kgsm.sh. The dev checkout under /home is
+# authoritative on this host (kgsm-watchdog points at the same path; /usr/local/bin/kgsm is
+# the stale old version). Unset this to run host-only. ProtectHome is deliberately NOT set —
+# kgsm.sh and its config live under /home and the daemon runs as that home's user.
+Environment=KGSM_MONITOR_KGSM_PATH=/home/heisen/tks/kgsm/kgsm.sh
 
-# systemd creates /run/kgsm-monitor (owned root:<group>, traversable by the group).
+# Event socket the monitor BINDS for low-latency watch-list deltas (Slice 2b). kgsm connects
+# to it (via socat) to push instance_* lifecycle events so a started/stopped server is
+# reflected sub-second instead of after KGSM_MONITOR_RESYNC_MS. The periodic resync stays the
+# source of truth, so this is purely a latency win. To use it, add this filename to kgsm's
+# config (enable_socket_events=true, event_socket_filenames=...,monitoring.sock).
+Environment=KGSM_MONITOR_KGSM_SOCKET=/run/kgsm-monitor/monitoring.sock
+
+# Per-server disk footprint (diskBytes): recompute cadence for the working-dir size walk.
+# Default 60s; lower it for snappier footprint updates during testing.
+# Environment=KGSM_MONITOR_DISK_USAGE_MS=60000
+
+# Host-specific overrides (signing keys, alternate paths, etc.) — optional, wins over the above.
+EnvironmentFile=-/etc/kgsm-monitor/kgsm-monitor.env
+
+# systemd creates /run/kgsm-monitor owned by this user (mode 0750); the 0660 socket lives in it.
 RuntimeDirectory=kgsm-monitor
 RuntimeDirectoryMode=0750
-
-# To let a non-root KGSM API scrape the socket: create a shared group (e.g. `kgsm`),
-# add the API's user to it, and uncomment the line below. The daemon keeps uid 0
-# (root powers for /proc + cgroups) but the socket is created group=kgsm, mode 0660,
-# so any group member can read it. Left commented so the unit starts without the group.
-# SupplementaryGroups=kgsm
-# Group=kgsm
 
 Restart=always
 RestartSec=2
 
-# Hardening — the daemon only reads /proc, /sys and (later) cgroups, and writes one
-# unix socket under its RuntimeDirectory. /proc and /sys stay readable under all of these.
-ProtectSystem=strict
-ProtectHome=true
-PrivateTmp=true
+# Hardening kept minimal/compatible: the daemon reads /proc, /sys, /sys/fs/cgroup and /home
+# (kgsm.sh + instance config) and writes only its RuntimeDirectory socket. ProtectHome/
+# ProtectSystem=strict are intentionally omitted — they'd hide or freeze the /home paths
+# kgsm.sh needs. AF_UNIX is the only socket family it uses.
 NoNewPrivileges=true
+PrivateTmp=true
 RestrictAddressFamilies=AF_UNIX
 
 [Install]
