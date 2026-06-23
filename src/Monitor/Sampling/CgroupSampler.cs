@@ -111,7 +111,8 @@ internal sealed class CgroupSampler
                 MemBytes: memBytes,
                 IoReadBps: ioReadBps,
                 IoWriteBps: ioWriteBps,
-                Pids: pids));
+                Pids: pids,
+                DiskBytes: null)); // merged from DiskUsageSampler in ServerSampler.Sample()
         }
 
         // Drop rate-state for servers that vanished this tick (stopped/removed) so the

@@ -159,9 +159,11 @@ missing key). Below is a fully-annotated example with every field; types and uni
       "memBytes": 1734967296, // systemd/container: cgroup memory.current (incl. page cache). native: summed RSS
       "ioReadBps": null,      // bytes/sec, or NULL when not accounted (§3.3) — null ≠ zero
       "ioWriteBps": null,
-      "pids": 12              // live process/thread count
+      "pids": 12,             // live process/thread count
+      "diskBytes": 293172125  // on-disk footprint of the instance's files (bytes), slow-cadence walk (§3.5); null until walked
     }
   ]
+  // NOTE: there is deliberately NO per-server network field — see §3.6.
 }
 ```
 
@@ -191,6 +193,7 @@ missing key). Below is a fully-annotated example with every field; types and uni
 | `servers[].ioReadBps` | `long?` | bytes/sec or **null** | `null` = not accounted (§3.3). |
 | `servers[].ioWriteBps` | `long?` | bytes/sec or **null** | |
 | `servers[].pids` | `int` | count | Live processes/threads. |
+| `servers[].diskBytes` | `long?` | **bytes** or **null** | On-disk footprint of the instance's working dir (§3.5). `null` = not yet walked / unreadable, **never** 0-for-unknown. |
 
 > **⚠ Unit trap — host CPU vs server CPU are different scales.** `cpu.totalPct` is
 > **0–100 across all cores** (the whole host). `servers[].cpuPctCore` is **percent of one
@@ -241,6 +244,39 @@ So: `null` io ⇒ a cgroup server without `IOAccounting=yes`. Render it as "—"
   briefly report a different process's real metrics. It's mis-attribution, not fabrication,
   and it matches what `kgsm instances status` would show. Don't build alerting that
   assumes native identity is cryptographically certain.
+
+### 3.5 `diskBytes` — on-disk footprint (different cadence, different source)
+
+`diskBytes` is the **only per-server metric that isn't a cgroup counter**. cgroups account
+I/O *throughput* (`ioReadBps`/`ioWriteBps`) but not *space occupied*, so the footprint is a
+**filesystem walk** of the instance's working directory (install + saves + backups + logs +
+temp), summing apparent file sizes. Consequences a consumer should know:
+
+- **It's on a slow cadence, not the 1 Hz tick.** A directory walk is far heavier than reading
+  a cgroup file, so it runs on its own timer (`KGSM_MONITOR_DISK_USAGE_MS`, default 60 s) and
+  the result is cached and conflated onto the frame. Two consecutive frames seconds apart can
+  carry the *same* `diskBytes` even as cpu/mem move — that's expected, not staleness.
+- **`null` until the first walk lands**, and `null` whenever the working dir can't be read
+  (perms / vanished). As everywhere, `null` ≠ 0 — render "—", not "0 B".
+- **Apparent size, not `du` blocks.** It sums file lengths, so sparse files read as an upper
+  bound. Symlinked directories are **not** descended (a save dir symlinked elsewhere is not
+  double-counted, and there are no cycles).
+- **Running servers only.** Like the rest of `servers[]`, a row exists only for a running
+  server, so a stopped server's footprint is simply absent (it isn't in the frame at all).
+
+### 3.6 Why there is no per-server **network**
+
+Per-server network is **deliberately not emitted** — and unlike `diskBytes` it is *deferred*,
+not merely scoped. The honest reason: a **native** server runs in the host network namespace,
+where `/proc/<pid>/net/dev` reports host-wide totals (per-netns, not per-process), and the
+kernel keeps **no per-socket byte counters for UDP** — the transport most game servers use. So
+attributing bytes to a native server needs continuous root-level packet accounting (eBPF, an
+`nftables` per-cgroup counter, or conntrack acct). The monitor is deliberately **read-only**
+and the host's firewall authority (`kgsm-firewall`) is **socket-activated** (invoked on demand,
+not a resident daemon), so neither can count continuously. Until a privileged resident source
+exists, per-server network has no honest value and the field is omitted rather than faked.
+(Container servers have their own netns and *could* be measured via `/proc/<pid>/net/dev`; that
+path is also deferred so the contract stays uniform across kinds.)
 
 ---
 
@@ -353,6 +389,7 @@ no query params, headers, or control endpoints. If you need different behaviour,
 | `KGSM_MONITOR_KGSM_PATH` | *(empty)* | **Unset ⇒ `servers` always `[]`** (host-only). Set ⇒ per-server on. |
 | `KGSM_MONITOR_KGSM_SOCKET` | `/run/kgsm-monitoring.sock` | KGSM→monitor event socket — **not yours**; don't connect to it. |
 | `KGSM_MONITOR_RESYNC_MS` | `15000` (floor 1000) | How fast a started/stopped server's presence catches up (worst case, absent events). |
+| `KGSM_MONITOR_DISK_USAGE_MS` | `60000` (floor 5000) | How often each server's `diskBytes` footprint is recomputed (a directory walk, §3.5) — your `diskBytes` refresh rate. |
 | `KGSM_MONITOR_EVENTS` | `on` | When on, lifecycle events make new servers appear sub-second instead of after `RESYNC_MS`. |
 
 ### Fixed by design — **not** configurable, and not worth fighting
@@ -367,8 +404,11 @@ no query params, headers, or control endpoints. If you need different behaviour,
   it.
 - **Push / streaming / SSE.** The monitor is pull-only. Streaming + auth + fan-out is the
   job of the API layer above it (the planned aggregator), not the monitor.
-- **Per-server network.** Not measured (cgroups don't account network without eBPF) — a
-  deliberate scope cut. There is no per-server net field and won't be without that work.
+- **Per-server network.** Not measured — **deferred**, see §3.6. Native servers share the host
+  netns and UDP has no per-socket byte counters, so it needs continuous root-level packet
+  accounting (eBPF / nftables / conntrack), which neither the read-only monitor nor the
+  socket-activated `kgsm-firewall` provides. There is no per-server net field until such a
+  source exists; don't expect one to appear additively the way `diskBytes` did.
 - **Auth.** None — the socket's filesystem perms are the boundary. If you need authn/authz,
   you add it in front; don't expect the monitor to.
 

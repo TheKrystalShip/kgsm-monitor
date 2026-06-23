@@ -52,6 +52,11 @@ public sealed class ServerSampler(
     // check (ServerCgroupResolver.FirstExisting), so their outputs are disjoint and concatenate.
     private readonly ProcTreeSampler _procTree = new();
 
+    // On-disk footprint per server. Cgroups don't account space, so this is a filesystem
+    // walk — too heavy for the metrics tick, so it runs on its own slow loop (DiskUsageMs)
+    // below and caches; Sample() merges the cached value onto each server's frame.
+    private readonly DiskUsageSampler _diskUsage = new();
+
     // Coalescing resync signal. RequestResync() releases it; the single drain loop in
     // ExecuteAsync waits on it and is the ONLY writer of _watch. Max count 1, so a burst
     // of events (or an event landing mid-resync) collapses to a single pending resync —
@@ -74,7 +79,15 @@ public sealed class ServerSampler(
         var watch = _watch;
         var cgroup = _cgroup.Sample(watch);
         var native = _procTree.Sample(watch);
-        return native.Length == 0 ? cgroup : [.. cgroup, .. native];
+        ServerMetrics[] all = native.Length == 0 ? cgroup : [.. cgroup, .. native];
+
+        // Merge the slow-cadence disk footprint onto each running server (null until the
+        // first walk lands, or when its working dir is unreadable). Both sub-samplers return
+        // a fresh array each call, so in-place rewrite is safe.
+        for (int i = 0; i < all.Length; i++)
+            all[i] = all[i] with { DiskBytes = _diskUsage.Get(all[i].Id) };
+
+        return all;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -89,6 +102,10 @@ public sealed class ServerSampler(
         // Periodic floor: nudge a resync every ServerResyncMs regardless of events, so a
         // missed (best-effort) event still self-heals within one period.
         var periodic = RunPeriodicNudgeAsync(stoppingToken);
+
+        // Slow disk-footprint loop, independent of the resync/metrics cadences (it walks
+        // every instance's working dir — far too heavy for either).
+        var diskLoop = RunDiskUsageLoopAsync(stoppingToken);
 
         try
         {
@@ -107,6 +124,31 @@ public sealed class ServerSampler(
         }
 
         await periodic.ConfigureAwait(false);
+        await diskLoop.ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Recompute every watched server's on-disk footprint on the slow
+    /// <see cref="MonitorOptions.DiskUsageMs"/> cadence. Primed once at start so the opening
+    /// frames pick up a footprint shortly after the first resync. This loop is the single
+    /// writer of <see cref="DiskUsageSampler"/>'s cache, so its volatile swap needs no lock.
+    /// The walk is synchronous I/O on this loop's thread by design — it must never run on the
+    /// metrics tick.
+    /// </summary>
+    private async Task RunDiskUsageLoopAsync(CancellationToken token)
+    {
+        _diskUsage.Refresh(_watch); // best-effort prime (watch-list filled by the initial Resync)
+
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(options.DiskUsageMs));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
+                _diskUsage.Refresh(_watch);
+        }
+        catch (OperationCanceledException)
+        {
+            // normal shutdown
+        }
     }
 
     private async Task RunPeriodicNudgeAsync(CancellationToken token)

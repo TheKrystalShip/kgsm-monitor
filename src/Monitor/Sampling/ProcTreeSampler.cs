@@ -191,7 +191,8 @@ internal sealed partial class ProcTreeSampler
                     MemBytes: rss,
                     IoReadBps: ioReadBps,
                     IoWriteBps: ioWriteBps,
-                    Pids: pidCount));
+                    Pids: pidCount,
+                    DiskBytes: null)); // merged from DiskUsageSampler in ServerSampler.Sample()
             }
         }
 

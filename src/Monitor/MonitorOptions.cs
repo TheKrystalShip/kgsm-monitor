@@ -71,6 +71,16 @@ public sealed class MonitorOptions
     /// </summary>
     public bool EventsEnabled { get; init; } = true;
 
+    /// <summary>
+    /// How often to recompute each server's on-disk footprint (a recursive directory walk
+    /// of the instance's working dir), in milliseconds. <c>KGSM_MONITOR_DISK_USAGE_MS</c>.
+    /// Default 60s, floor 5s. This stats every file under the tree — far heavier than the
+    /// cgroup reads — so it runs on its own slow cadence, off both the 1&#160;Hz metrics tick
+    /// and the instance resync. The walked figure is cached and conflated; the tick reads
+    /// the latest value. No effect unless KGSM is configured (<see cref="KgsmEnabled"/>).
+    /// </summary>
+    public int DiskUsageMs { get; init; } = 60_000;
+
     /// <summary>True when per-server sampling is configured (a KGSM path was provided).</summary>
     public bool KgsmEnabled => KgsmPath.Length > 0;
 
@@ -90,6 +100,10 @@ public sealed class MonitorOptions
         if (int.TryParse(Env("KGSM_MONITOR_RESYNC_MS"), out int rs) && rs >= 1000)
             resync = rs;
 
+        int diskUsage = defaults.DiskUsageMs;
+        if (int.TryParse(Env("KGSM_MONITOR_DISK_USAGE_MS"), out int du) && du >= 5000)
+            diskUsage = du;
+
         UnixFileMode mode = defaults.SocketMode;
         if (Env("KGSM_MONITOR_SOCKET_MODE") is { Length: > 0 } modeStr)
         {
@@ -107,6 +121,7 @@ public sealed class MonitorOptions
             KgsmPath = Env("KGSM_MONITOR_KGSM_PATH") is { Length: > 0 } kp ? kp : defaults.KgsmPath,
             KgsmSocketPath = Env("KGSM_MONITOR_KGSM_SOCKET") is { Length: > 0 } ks ? ks : defaults.KgsmSocketPath,
             ServerResyncMs = resync,
+            DiskUsageMs = diskUsage,
             EventsEnabled = ParseBool(Env("KGSM_MONITOR_EVENTS"), defaults.EventsEnabled),
         };
     }

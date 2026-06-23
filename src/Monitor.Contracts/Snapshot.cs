@@ -116,6 +116,19 @@ public sealed record SensorReading(string Chip, string? Label, double ValueC);
 /// <c>native</c> reads <c>/proc/[pid]/io</c> as root so it reports a number, never null.</param>
 /// <param name="IoWriteBps">Block-IO write rate, or null (see <paramref name="IoReadBps"/>).</param>
 /// <param name="Pids">Live process/thread count (<c>pids.current</c>).</param>
+/// <param name="DiskBytes">
+/// On-disk footprint: the apparent total size (sum of file lengths) of the instance's
+/// working directory — install + saves + backups + logs + temp. Unlike the cgroup
+/// counters above this is a <em>filesystem</em> figure cgroups don't expose, so it is
+/// sampled on a slow, separate cadence (a directory walk, not the 1&#160;Hz tick — see
+/// <c>KGSM_MONITOR_DISK_USAGE_MS</c>) and conflated like the rest of the frame.
+/// Symlinks are not followed (no double-count). <c>null</c> when not yet walked or the
+/// directory can't be read — never a fabricated 0. Only attached to running servers
+/// (the frame lists running servers only), so a stopped server's footprint is absent.
+/// <em>Per-server network is deliberately omitted</em> — it can't be measured honestly
+/// for native (host-netns, UDP) servers without continuous root-level packet accounting,
+/// which no resident component provides (kgsm-firewall is socket-activated, not a daemon).
+/// </param>
 public sealed record ServerMetrics(
     string Id,
     string Name,
@@ -124,4 +137,5 @@ public sealed record ServerMetrics(
     long MemBytes,
     long? IoReadBps,
     long? IoWriteBps,
-    int Pids);
+    int Pids,
+    long? DiskBytes);

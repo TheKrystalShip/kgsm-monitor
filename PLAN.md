@@ -19,6 +19,21 @@
 > natives with no live cgroup (partition arbiter = `ServerCgroupResolver.FirstExisting`,
 > so each server is sampled by exactly one path). See §11 Validation log.
 >
+> **Inc 5 (2026-06-23) — per-server disk footprint + lib re-pin (Contracts 1.2.0).**
+> `ServerMetrics.diskBytes` — the on-disk size of an instance's working dir — is now on
+> the frame, from a new `DiskUsageSampler`: a directory walk on its own slow cadence
+> (`KGSM_MONITOR_DISK_USAGE_MS`, default 60 s, volatile-swap cache), merged onto each
+> running server in `ServerSampler.Sample()`. The walk skips symlinks (no double-count),
+> is apparent-size, and is `null` (never 0) until walked / when unreadable. **Also re-pinned
+> kgsm-lib 1.5.0 → 1.22.0:** 1.5.0 modelled `Instance.ports` as a string, but kgsm now emits
+> the structured `ports` array (canonical-port-format, lib 1.10.0) — on the old pin the
+> per-server resync threw on the instance-list JSON and `servers[]` was permanently empty.
+> **Per-server network stays deferred** (D8) — confirmed 2026-06-23: native servers share
+> the host netns and UDP has no per-socket byte counters, so it needs continuous root-level
+> packet accounting, which neither the read-only monitor nor the **socket-activated**
+> `kgsm-firewall` (not a resident daemon) can provide. Live-validated: factorio-test
+> `diskBytes` byte-exact vs `du -b`; AOT publish 0-warning. See §11 Validation log.
+>
 > **Logging** follows the ecosystem convention (`../logging-convention.md`):
 > `Microsoft.Extensions.Logging` → `AddSystemdConsole()` (journald `<N>` priority prefix),
 > levels from `appsettings.json` `Logging` + env (`Logging__LogLevel__Default`, default
@@ -200,7 +215,8 @@ kgsm-monitor/
 ### Later (out of build slices)
 - [ ] **API relay**: KGSM API opens one scrape/subscription, re-fans-out over authed SSE, caches latest for instant first frame
 - [ ] **React SPA** dashboards (per-process/per-server filtering client-side)
-- [ ] **Per-server network** via eBPF/nftables (the deferred metric)
+- [ ] **Per-server network** via eBPF/nftables/conntrack (the deferred metric) — **confirmed deferred 2026-06-23**: needs a *resident, privileged* packet-accounting source. The read-only monitor won't escalate, and `kgsm-firewall` is socket-activated (invoked on demand, not a daemon) so it can't count continuously. No honest source today; field omitted, not faked (see `docs/integration.md §3.6`).
+- [x] **Per-server disk footprint** (`diskBytes`) — Inc 5, 2026-06-23 (working-dir walk, slow cadence)
 
 ## 11. Validation log
 **2026-06-11 — Slice 1 host sampler, Native AOT, live:**
