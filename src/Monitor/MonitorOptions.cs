@@ -12,8 +12,10 @@ public sealed class MonitorOptions
     /// <summary>Sampling cadence in milliseconds. <c>KGSM_MONITOR_INTERVAL_MS</c>.</summary>
     public int IntervalMs { get; init; } = 1000;
 
-    /// <summary>Unix domain socket to listen on. <c>KGSM_MONITOR_SOCKET</c>.</summary>
-    public string SocketPath { get; init; } = "/run/kgsm-monitor.sock";
+    /// <summary>Unix domain socket to listen on. <c>KGSM_MONITOR_SOCKET</c>. Lives inside the
+    /// per-service runtime dir (systemd <c>RuntimeDirectory=kgsm-monitor</c>) so the path matches
+    /// the deployed unit and a co-located API connects to the same default.</summary>
+    public string SocketPath { get; init; } = "/run/kgsm-monitor/metrics.sock";
 
     /// <summary>
     /// Permission bits applied to the socket once it exists. <c>KGSM_MONITOR_SOCKET_MODE</c>
@@ -50,7 +52,7 @@ public sealed class MonitorOptions
     /// delta in Slice 2b). <c>KGSM_MONITOR_KGSM_SOCKET</c>. Distinct from <see cref="SocketPath"/>
     /// (which the API scrapes); this one is where KGSM pushes <c>instance_*</c> events.
     /// </summary>
-    public string KgsmSocketPath { get; init; } = "/run/kgsm-monitoring.sock";
+    public string KgsmSocketPath { get; init; } = "/run/kgsm-monitor/monitoring.sock";
 
     /// <summary>
     /// How often to re-list KGSM instances (the source-of-truth resync), in milliseconds.

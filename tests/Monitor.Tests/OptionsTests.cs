@@ -25,7 +25,7 @@ public class OptionsTests
         var o = MonitorOptions.FromEnvironment();
 
         Assert.Equal(1000, o.IntervalMs);
-        Assert.Equal("/run/kgsm-monitor.sock", o.SocketPath);
+        Assert.Equal("/run/kgsm-monitor/metrics.sock", o.SocketPath);
         Assert.Equal(
             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite,
             o.SocketMode);

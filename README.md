@@ -34,13 +34,13 @@ curl --unix-socket /tmp/kgsm-monitor.sock http://localhost/metrics | jq
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `KGSM_MONITOR_SOCKET` | `/run/kgsm-monitor.sock` | Unix socket path to listen on |
+| `KGSM_MONITOR_SOCKET` | `/run/kgsm-monitor/metrics.sock` | Unix socket path to listen on |
 | `KGSM_MONITOR_SOCKET_MODE` | `660` | Octal perms applied to the socket (group read = API can scrape) |
 | `KGSM_MONITOR_INTERVAL_MS` | `1000` | Sampling cadence (floor 100 ms) |
 | `KGSM_MONITOR_IFACE_DENY` | `veth` | Comma-separated interface-name prefixes to exclude |
 | `KGSM_MONITOR_MOUNT_FS_DENY` | *(empty)* | Extra fs types to hide (pseudo-fs already filtered) |
 | `KGSM_MONITOR_KGSM_PATH` | *(empty)* | Path to `kgsm.sh`. **Unset ⇒ host-only**; set ⇒ per-server cgroup sampling on |
-| `KGSM_MONITOR_KGSM_SOCKET` | `/run/kgsm-monitoring.sock` | Socket the monitor owns for KGSM lifecycle events (Slice 2b) |
+| `KGSM_MONITOR_KGSM_SOCKET` | `/run/kgsm-monitor/monitoring.sock` | Socket the monitor owns for KGSM lifecycle events (Slice 2b) |
 | `KGSM_MONITOR_RESYNC_MS` | `15000` | How often to re-list KGSM instances (floor 1 s; off the metrics tick) |
 | `KGSM_MONITOR_EVENTS` | `on` | Listen for KGSM events on the socket above (`1/0`, `true/false`, `on/off`). Off ⇒ resync-only |
 
