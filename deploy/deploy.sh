@@ -107,6 +107,20 @@ STOPPED=1
 log "installing binary → ${PREFIX}/kgsm-monitor"
 install -m 0755 "$PUBLISH_DIR/kgsm-monitor" "$PREFIX/kgsm-monitor"
 
+# Settings file → beside the binary, where the daemon loads it from AppContext.BaseDirectory (Program.cs).
+# WITHOUT this the daemon never sees its settings (the slim builder's content root is "/" under systemd),
+# so the ASP.NET log level silently stays at the chatty Information default and floods journald on every
+# scrape. 0644 = world-readable, fine for shipped app defaults (operator overrides go through env vars, not
+# this file); overwrite on every deploy to stay version-matched with the binary. PREFIX is owned by the
+# service user (step 2), so no sudo — same as the binary install above.
+SETTINGS_SRC="$PUBLISH_DIR/kgsm-monitor.settings.json"
+if [[ -f "$SETTINGS_SRC" ]]; then
+    log "installing settings → ${PREFIX}/kgsm-monitor.settings.json"
+    install -m 0644 "$SETTINGS_SRC" "$PREFIX/kgsm-monitor.settings.json"
+else
+    err "warning: ${SETTINGS_SRC} not found in publish output — daemon will fall back to built-in defaults."
+fi
+
 if [[ "$UNIT_CHANGED" -eq 1 ]]; then
     log "reloading systemd"
     $SUDO systemctl daemon-reload

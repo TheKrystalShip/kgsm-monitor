@@ -5,10 +5,23 @@ using TheKrystalShip.KGSM.Monitor.Sampling;
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
+// Load the daemon's settings file from beside the binary. Two reasons it must be explicit (same as
+// kgsm-watchdog):
+//   1. CreateSlimBuilder under a systemd unit with no WorkingDirectory leaves the content root at "/",
+//      so the framework's default appsettings.json discovery finds nothing — the file's settings (the
+//      "Microsoft.AspNetCore":"Warning" log filter today) silently never apply, and ASP.NET's
+//      per-request Information chatter floods journald on every api scrape. Resolve it from
+//      AppContext.BaseDirectory (the binary's own dir, /opt/kgsm-monitor), where deploy installs it.
+//   2. It is named kgsm-monitor.settings.json, NOT appsettings.json, so it can never collide with a
+//      sibling ecosystem service's config if they ever share a directory.
+// optional:true so a missing file never stops the daemon; env vars (Logging__LogLevel__*) still override.
+builder.Configuration.AddJsonFile(
+    Path.Combine(AppContext.BaseDirectory, "kgsm-monitor.settings.json"), optional: true, reloadOnChange: false);
+
 // Ecosystem-standard logging (see ../tks/logging-convention.md): one journald-native SystemdConsole
 // sink (the <N> syslog priority prefix lets `journalctl -p` filter by level). AddConfiguration binds the
-// "Logging" section from appsettings.json + env overrides (Logging__LogLevel__Default=Debug) — wired
-// explicitly so the level knob is deterministic on the slim builder rather than relying on an implicit
+// "Logging" section from kgsm-monitor.settings.json + env overrides (Logging__LogLevel__Default=Debug) —
+// wired explicitly so the level knob is deterministic on the slim builder rather than relying on an implicit
 // default. Monitor's own knobs still come from env (MonitorOptions.FromEnvironment); this is logging only.
 builder.Logging.ClearProviders();
 builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));

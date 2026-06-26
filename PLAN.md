@@ -36,8 +36,9 @@
 >
 > **Logging** follows the ecosystem convention (`../logging-convention.md`):
 > `Microsoft.Extensions.Logging` → `AddSystemdConsole()` (journald `<N>` priority prefix),
-> levels from `appsettings.json` `Logging` + env (`Logging__LogLevel__Default`, default
-> `Information`). The `CreateSlimBuilder` host binds the section explicitly via `AddConfiguration`.
+> levels from `kgsm-monitor.settings.json` `Logging` + env (`Logging__LogLevel__Default`, default
+> `Information`). The `CreateSlimBuilder` host loads the settings file from `AppContext.BaseDirectory`
+> (deploy installs it beside the binary) and binds the section explicitly via `AddConfiguration`.
 
 ---
 
