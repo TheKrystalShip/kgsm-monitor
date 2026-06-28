@@ -52,7 +52,7 @@
          resync threw on the detailed instance-list JSON ("StartArray as string"),
          the watch-list stayed empty, and `servers` was permanently []. 1.22.0 also
          carries Instance.CgroupPath (native cgroup addressing) the resolver needs. -->
-    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="1.22.0" />
+    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="1.28.0" />
   </ItemGroup>
 
 </Project>
