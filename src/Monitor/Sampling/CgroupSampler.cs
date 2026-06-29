@@ -20,8 +20,8 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// <para>
 /// <b>io is opt-in:</b> <c>io.stat</c> only exists when the io controller is
 /// accounted for the cgroup (systemd <c>IOAccounting=yes</c>). When absent, the io
-/// rates are null rather than zero — "not measured" is not "no I/O". This parallels
-/// the host-only / no-per-server-network scope cut.
+/// rates are null rather than zero — "not measured" is not "no I/O". Per-server network
+/// follows the same null-not-zero rule (native via the eBPF meter, container via its netns).
 /// </para>
 /// </summary>
 internal sealed class CgroupSampler
@@ -32,10 +32,20 @@ internal sealed class CgroupSampler
         public long IoReadBytes;
         public long IoWriteBytes;
         public bool HasIo;
+        public long RxBytes;
+        public long TxBytes;
+        public bool HasNet;
     }
 
     private readonly Dictionary<string, Prev> _prev = new();
     private long _prevTicks;
+
+    // Per-server network bytes from the pinned eBPF cgroup/skb meter (Phase 1). Cumulative
+    // totals here → RxBps/TxBps rates below, exactly like io. Returns null (honest "unavailable")
+    // when the meter isn't set up or the cgroup is outside kgsm.slice; never a fabricated 0.
+    private readonly NetworkCgroupSource _net;
+
+    internal CgroupSampler(ILogger? logger = null) => _net = new NetworkCgroupSource(logger);
 
     /// <summary>
     /// Produce one <see cref="ServerMetrics"/> per addressable, running server in
@@ -72,11 +82,21 @@ internal sealed class CgroupSampler
             bool hasIo = TryReadText(Path.Combine(dir, "io.stat"), out string ioTxt);
             (long ioRead, long ioWrite) = hasIo ? ParseIoStat(ioTxt) : (0, 0);
 
+            // Per-server network, by kind. NATIVE (under kgsm.slice): the eBPF cgroup/skb meter
+            // (Phase 1) — null when the meter isn't set up, the cgroup is outside kgsm.slice, or
+            // no traffic has crossed yet. CONTAINER (own netns on Docker's bridge, invisible to the
+            // kgsm.slice meter): read its netns rx/tx from /proc/<pid>/net/dev (Phase 5). Either
+            // way: cumulative bytes → RxBps/TxBps below; null is honest "unavailable", never a 0.
+            (long RxBytes, long TxBytes)? net = target.Kind == "container"
+                ? NetworkContainerSource.TryRead(dir)
+                : _net.TryRead(dir);
+
             seen.Add(id);
             _prev.TryGetValue(id, out var prev);
 
             double cpuPctCore = 0;
             long? ioReadBps = null, ioWriteBps = null;
+            long? rxBps = null, txBps = null;
 
             if (prev is not null && _prevTicks != 0)
             {
@@ -86,13 +106,27 @@ internal sealed class CgroupSampler
                     ioReadBps = Math.Max(0, (long)((ioRead - prev.IoReadBytes) / dt));
                     ioWriteBps = Math.Max(0, (long)((ioWrite - prev.IoWriteBytes) / dt));
                 }
+                if (net is { } n && prev.HasNet)
+                {
+                    rxBps = Math.Max(0, (long)((n.RxBytes - prev.RxBytes) / dt));
+                    txBps = Math.Max(0, (long)((n.TxBytes - prev.TxBytes) / dt));
+                }
             }
-            else if (hasIo)
+            else
             {
-                // First observation of this server: counters are known but a rate needs
-                // two samples. Report 0 (measured-but-idle) rather than null (not-measured).
-                ioReadBps = 0;
-                ioWriteBps = 0;
+                // First observation of this server: counters are known but a rate needs two
+                // samples. Report 0 (measured-but-idle) rather than null (not-measured), but only
+                // for the sources actually present this tick.
+                if (hasIo)
+                {
+                    ioReadBps = 0;
+                    ioWriteBps = 0;
+                }
+                if (net is not null)
+                {
+                    rxBps = 0;
+                    txBps = 0;
+                }
             }
 
             _prev[id] = new Prev
@@ -101,6 +135,9 @@ internal sealed class CgroupSampler
                 IoReadBytes = ioRead,
                 IoWriteBytes = ioWrite,
                 HasIo = hasIo,
+                RxBytes = net?.RxBytes ?? 0,
+                TxBytes = net?.TxBytes ?? 0,
+                HasNet = net is not null,
             };
 
             result.Add(new ServerMetrics(
@@ -112,7 +149,9 @@ internal sealed class CgroupSampler
                 IoReadBps: ioReadBps,
                 IoWriteBps: ioWriteBps,
                 Pids: pids,
-                DiskBytes: null)); // merged from DiskUsageSampler in ServerSampler.Sample()
+                DiskBytes: null, // merged from DiskUsageSampler in ServerSampler.Sample()
+                RxBps: rxBps,
+                TxBps: txBps));
         }
 
         // Drop rate-state for servers that vanished this tick (stopped/removed) so the

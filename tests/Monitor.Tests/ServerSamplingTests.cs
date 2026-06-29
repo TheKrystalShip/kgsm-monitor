@@ -239,3 +239,118 @@ public class NativeCgroupPartitionTests : IDisposable
             "rchar: 1\nwchar: 1\nsyscr: 1\nsyscw: 1\nread_bytes: 0\nwrite_bytes: 0\ncancelled_write_bytes: 0\n");
     }
 }
+
+/// <summary>
+/// Phase 1 per-server network (the eBPF cgroup/skb meter). The meter itself needs a real
+/// kernel map + cap_bpf, so the integration path can't run unprivileged here; what IS
+/// deterministic and load-bearing is the <b>honest-null contract</b> when the meter is absent —
+/// which is the state in CI/test and the common state on an un-set-up host. These pin that a
+/// missing meter yields <c>null</c> (never a fabricated 0) and never throws on the hot path.
+/// </summary>
+public class NetworkCgroupSourceTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), $"kgsm-net-{Guid.NewGuid():N}");
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_root, recursive: true); } catch { /* best effort */ }
+    }
+
+    [Fact]
+    public void Absent_pin_reads_unavailable_and_returns_null_without_throwing()
+    {
+        Directory.CreateDirectory(_root);
+        // A pin path that does not exist -> BPF_OBJ_GET fails (ENOENT, or EPERM without cap_bpf).
+        var src = new NetworkCgroupSource(log: null, pinPath: Path.Combine(_root, "no-such-net-map"));
+
+        // Reading a real, existing directory must still surface "unavailable" (null), not throw:
+        // the failure is the missing meter, not the cgroup.
+        Assert.Null(src.TryRead(_root));
+        Assert.False(src.Available);
+    }
+
+    [Fact]
+    public void CgroupSampler_emits_null_network_when_the_meter_is_absent()
+    {
+        // A real cgroup dir (so the server IS sampled) but no eBPF meter in this environment.
+        string cgDir = Path.Combine(_root, "cg", "terraria-01");
+        Directory.CreateDirectory(cgDir);
+        File.WriteAllText(Path.Combine(cgDir, "cpu.stat"), "usage_usec 2000000\n");
+        File.WriteAllText(Path.Combine(cgDir, "memory.current"), "2097152\n");
+        File.WriteAllText(Path.Combine(cgDir, "pids.current"), "9\n");
+
+        var instances = new Dictionary<string, Instance>
+        {
+            ["terraria-01"] = new() { Name = "terraria-01", CgroupPath = cgDir },
+        };
+
+        var sampler = new CgroupSampler();
+        var first = Assert.Single(sampler.Sample(instances));
+        // Second sample so a prior counter exists — proving the null is "not measured", not just
+        // the first-tick "rate needs two samples" 0. Network must stay null, never a 0.
+        var second = Assert.Single(sampler.Sample(instances));
+
+        Assert.Null(first.RxBps);
+        Assert.Null(first.TxBps);
+        Assert.Null(second.RxBps);
+        Assert.Null(second.TxBps);
+    }
+}
+
+public class NetworkContainerSourceTests
+{
+    // A realistic /proc/<pid>/net/dev: two header lines, lo, and two real interfaces.
+    private const string ProcNetDev =
+        "Inter-|   Receive                                                |  Transmit\n" +
+        " face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n" +
+        "    lo:    1234      10    0    0    0     0          0         0     1234      10    0    0    0     0       0          0\n" +
+        "  eth0:  500000     400    0    0    0     0          0         0    20000     300    0    0    0     0       0          0\n" +
+        "  eth1:    1000       5    0    0    0     0          0         0      500       3    0    0    0     0       0          0\n";
+
+    [Fact]
+    public void SumNonLoopback_sums_rx_tx_across_non_lo_interfaces()
+    {
+        var (rx, tx) = NetworkContainerSource.SumNonLoopback(ProcNetDev);
+        Assert.Equal(501000, rx); // eth0 + eth1 receive; lo excluded
+        Assert.Equal(20500, tx);  // eth0 + eth1 transmit; lo excluded
+    }
+
+    [Fact]
+    public void SumNonLoopback_handles_no_space_after_colon()
+    {
+        // Busy interfaces print no space between "iface:" and the first counter.
+        var (rx, tx) = NetworkContainerSource.SumNonLoopback("  eth0:18446744 9 0 0 0 0 0 0 12345 8 0 0 0 0 0 0\n");
+        Assert.Equal(18446744, rx);
+        Assert.Equal(12345, tx);
+    }
+
+    [Fact]
+    public void SumNonLoopback_empty_or_header_only_is_zero()
+    {
+        Assert.Equal((0L, 0L), NetworkContainerSource.SumNonLoopback(""));
+        Assert.Equal((0L, 0L), NetworkContainerSource.SumNonLoopback(
+            "Inter-|   Receive                                                |  Transmit\n face |bytes\n"));
+    }
+
+    [Fact]
+    public void TryRead_missing_cgroup_returns_null_without_throwing()
+    {
+        Assert.Null(NetworkContainerSource.TryRead("/sys/fs/cgroup/does-not-exist-" + Guid.NewGuid().ToString("N")));
+        Assert.Null(NetworkContainerSource.TryRead(""));
+    }
+
+    [Fact]
+    public void TryRead_reads_a_live_container_cgroup_when_provided()
+    {
+        // Integration hook (skipped in CI): export KGSM_IT_CONTAINER_CGROUP=/sys/fs/cgroup/system.slice/
+        // docker-<id>.scope for a running container, and this asserts TryRead reads its real netns
+        // counters via /proc/<pid>/net/dev — the exact production read path against a real container.
+        string? dir = Environment.GetEnvironmentVariable("KGSM_IT_CONTAINER_CGROUP");
+        if (string.IsNullOrEmpty(dir))
+            return; // not provided -> skip (keeps the suite hermetic)
+
+        var v = NetworkContainerSource.TryRead(dir);
+        Assert.NotNull(v);
+        Assert.True(v!.Value.RxBytes >= 0 && v.Value.TxBytes >= 0);
+    }
+}

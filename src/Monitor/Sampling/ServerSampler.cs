@@ -44,7 +44,9 @@ public sealed class ServerSampler(
     private static readonly IReadOnlyDictionary<string, Instance> Empty =
         new Dictionary<string, Instance>();
 
-    private readonly CgroupSampler _cgroup = new();
+    // logger threaded in so CgroupSampler -> NetworkCgroupSource can log the eBPF meter's
+    // availability once (pin/cap state), without making every sub-sampler take a logger.
+    private readonly CgroupSampler _cgroup = new(logger);
 
     // Slice 3: the native fallback. Native servers whose cgroup is not live (no cgroup_path,
     // or its kgsm.slice/<inst> dir absent) are invisible to _cgroup; this reads their /proc

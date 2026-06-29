@@ -34,6 +34,50 @@
 > `kgsm-firewall` (not a resident daemon) can provide. Live-validated: factorio-test
 > `diskBytes` byte-exact vs `du -b`; AOT publish 0-warning. See §11 Validation log.
 >
+> **Inc 6 (2026-06-29) — per-server network (D8 REVERSED; Contracts 1.3.0).**
+> `ServerMetrics.rxBps`/`txBps` — per-server receive/transmit throughput in bytes/sec — are now on
+> the frame, from a passive **eBPF `cgroup/skb` byte counter** (`src/Monitor/bpf/net_meter.bpf.c`).
+> The program is attached **once**, at setup, to the KGSM parent cgroup `/sys/fs/cgroup/kgsm.slice`
+> for **both `cgroup_skb/ingress` and `cgroup_skb/egress`** with `BPF_F_ALLOW_MULTI` (coexists with
+> any other cgroup-BPF, e.g. systemd's). `cgroup/skb` effective programs propagate to all
+> descendants, so one attach covers every present and future instance cgroup beneath the slice. It
+> is **passive** — counts `skb->len` per direction keyed by `bpf_skb_cgroup_id(skb)` and **always
+> `return 1`** (never drops/modifies/reroutes), keeping the monitor's observe-never-interfere ethos.
+> The per-cgroup totals live in a **pinned `LRU_HASH` map at `/sys/fs/bpf/kgsm/net_metrics`**
+> (key = `__u64` cgroup id == cgroup dir inode; value = `{rx_bytes,tx_bytes,rx_pkts,tx_pkts}`, all
+> `__u64`). The monitor reads it each tick: `NetworkCgroupSource` computes the cgroup id by
+> `stat().st_ino` on the resolved instance cgroup dir (the same number the kernel reports via
+> `bpf_skb_cgroup_id`), looks it up via a **minimal AOT-safe `bpf()` syscall interop**
+> (`src/Monitor/Interop/Bpf.cs` — `BPF_OBJ_GET` + `BPF_MAP_LOOKUP_ELEM`, `[LibraryImport]`, no
+> reflection), and `CgroupSampler` turns the cumulative totals into `rxBps`/`txBps` rates over `dt`
+> **exactly like the io rates**. **Honest null, never a fabricated 0:** the meter not being set up
+> (pin missing / `cap_bpf` not granted), a cgroup outside `kgsm.slice` (a `systemd`/`container`
+> server, or a `native` server with no live cgroup — `ProcTreeSampler` emits null), or a cgroup with
+> no counted traffic yet all read `null`. **Privilege:** the host sets
+> `kernel.unprivileged_bpf_disabled=2`, so the monitor needs **`cap_bpf`** (read-flavoured — cannot
+> modify networking, isn't root) to call `bpf()`; the unit grants it via `AmbientCapabilities=CAP_BPF`
+> (works with `NoNewPrivileges=true`, which would *ignore* a setcap file cap). **Durability:** the
+> attach is bound to the cgroup, so a `kgsm-net-meter.service` **oneshot** runs the idempotent
+> `deploy/net-meter-setup.sh` (compile→load→pin→attach→perms→setcap) ordered
+> `After=`/`PartOf=kgsm-watchdog.service` + `WantedBy=multi-user.target`, re-establishing the attach
+> on boot and whenever the watchdog (re)starts. Attaching to `kgsm.slice` (the stable parent), **not**
+> the per-restart watchdog *service* cgroup, means a watchdog restart normally leaves the attach
+> intact. **Phase 0** (the eBPF program + setup script + oneshot) is authored here but **privileged
+> steps are run by the orchestrator** (sudo: install Arch `bpf`+`libbpf`, run the setup); **Phase 1**
+> (the read path) is built + AOT-clean + unit-tested for the honest-null contract.
+>
+> **Phase 5 — containers (DONE 2026-06-29).** Container instances run in their own netns on
+> Docker's bridge, invisible to the `kgsm.slice` eBPF meter (their cgroup is under Docker's
+> hierarchy), so they get a second source: `NetworkContainerSource` reads the first pid from the
+> docker scope's `cgroup.procs` and sums non-`lo` rx/tx from `/proc/<pid>/net/dev` — the container's
+> own perspective (no veth mirroring). `CgroupSampler` branches by `target.Kind` ("container" → proc
+> source, else → eBPF map); the shared `Math.Max(0,delta)` clamp absorbs netns counter resets on
+> restart. **No extra privilege** (`/proc/<pid>/net/dev` is world-readable even for a root container;
+> `cgroup.procs` readable — validated) and **no docker dependency / no contract change** (feeds the
+> same `RxBps`/`TxBps`). Chosen over a host-`veth` source (works but mirrors rx/tx + needs veth-name
+> resolution). Validated against a real container (compiled `TryRead` + golden parse tests, 97/97).
+> See §10 work tracker + `docs/integration.md §3.6`.
+>
 > **Logging** follows the ecosystem convention (`../logging-convention.md`):
 > `Microsoft.Extensions.Logging` → `AddSystemdConsole()` (journald `<N>` priority prefix),
 > levels from `kgsm-monitor.settings.json` `Logging` + env (`Logging__LogLevel__Default`, default
@@ -86,7 +130,7 @@ Think `htop`/`btop` efficiency: read what the kernel already maintains, cheaply.
 | D5 | **.NET 10**, Native AOT | Latest tier; small footprint/instant start fits "don't steal RAM"; AOT discipline = the fast path |
 | D6 | Transport = **unix domain socket**, unauthenticated, root-only reachable | No exposed port; FS perms are the boundary; API enforces OAuth |
 | D7 | Runs as **root** | Needs `/proc/<pid>/io` + all cgroups; KGSM systemd units are **system-wide** |
-| D8 | **Host-level network only**; per-server net deferred | cgroups don't account network without eBPF/netns — conscious scope cut |
+| D8 | ~~**Host-level network only**; per-server net deferred~~ → **REVERSED 2026-06-29 (Inc 6):** per-server network now measured via a passive eBPF `cgroup/skb` meter on `kgsm.slice` (pinned map, monitor reads it with `cap_bpf`). | cgroups have no network controller, but a passive cgroup-BPF byte counter supplies the missing per-cgroup totals honestly (measured-or-null); see Inc 6 |
 | D9 | **Embed `kgsm-lib`** for KGSM integration (Slice 2), not re-implement socket/CLI | Single KGSM chokepoint; lib is now AOT-safe (see §7) |
 | D10 | source-gen JSON + source-gen logging + span `/proc` parsing | Keeps the binary reflection-free / trim-AOT-clean |
 
@@ -216,7 +260,14 @@ kgsm-monitor/
 ### Later (out of build slices)
 - [ ] **API relay**: KGSM API opens one scrape/subscription, re-fans-out over authed SSE, caches latest for instant first frame
 - [ ] **React SPA** dashboards (per-process/per-server filtering client-side)
-- [ ] **Per-server network** via eBPF/nftables/conntrack (the deferred metric) — **confirmed deferred 2026-06-23**: needs a *resident, privileged* packet-accounting source. The read-only monitor won't escalate, and `kgsm-firewall` is socket-activated (invoked on demand, not a daemon) so it can't count continuously. No honest source today; field omitted, not faked (see `docs/integration.md §3.6`).
+- [x] **Per-server network** (`rxBps`/`txBps`) — **Inc 6, 2026-06-29 (D8 reversed).** A passive
+  eBPF `cgroup/skb` byte meter attached once to `kgsm.slice` (pinned map at
+  `/sys/fs/bpf/kgsm/net_metrics`), read each tick by `NetworkCgroupSource` via a minimal AOT-safe
+  `bpf()` interop and rated like io by `CgroupSampler`. The earlier "deferred — needs a resident
+  privileged source" reasoning is resolved: a kernel-verified passive counter *is* that source
+  (one-time `cap_bpf` for map reads, not a continuous root daemon). Phase 0 (program + setup +
+  oneshot) authored; Phase 1 (read path) built + AOT-clean. Honest-null when un-metered (see Inc 6
+  + `docs/integration.md §3.6`). Phase 5 (containers via `veth`) remains optional/later.
 - [x] **Per-server disk footprint** (`diskBytes`) — Inc 5, 2026-06-23 (working-dir walk, slow cadence)
 
 ## 11. Validation log

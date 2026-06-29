@@ -51,10 +51,21 @@ RestartSec=2
 # Hardening kept minimal/compatible: the daemon reads /proc, /sys, /sys/fs/cgroup and /home
 # (kgsm.sh + instance config) and writes only its RuntimeDirectory socket. ProtectHome/
 # ProtectSystem=strict are intentionally omitted — they'd hide or freeze the /home paths
-# kgsm.sh needs. AF_UNIX is the only socket family it uses.
+# kgsm.sh needs. AF_UNIX is the only socket family it uses (bpf() is not socket/AF-gated).
 NoNewPrivileges=true
 PrivateTmp=true
 RestrictAddressFamilies=AF_UNIX
+
+# Per-server network (Phase 1): the monitor reads the pinned eBPF net-meter map via bpf(),
+# which this host gates behind cap_bpf (kernel.unprivileged_bpf_disabled=2). With
+# NoNewPrivileges=true a setcap'd file capability would be IGNORED, so we grant the cap the
+# systemd-native way: AmbientCapabilities raises CAP_BPF into the (User=heisen) service and
+# survives the uid switch, and it's compatible with NoNewPrivileges. The bounding set is
+# narrowed to just CAP_BPF (read-flavoured: cannot modify networking, isn't root). If the
+# net-meter isn't set up (deploy/kgsm-net-meter.service not run), the monitor simply reports
+# RxBps/TxBps as null — this cap is harmless when unused. Drop both lines to run without it.
+AmbientCapabilities=CAP_BPF
+CapabilityBoundingSet=CAP_BPF
 
 [Install]
 WantedBy=multi-user.target

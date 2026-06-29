@@ -1,0 +1,27 @@
+[Unit]
+Description=KGSM per-server network meter (eBPF cgroup/skb counter) setup
+Documentation=https://github.com/TheKrystalShip
+# The meter attaches to the kgsm.slice cgroup, which kgsm-watchdog owns/creates. Order
+# AFTER the watchdog so the slice exists when we attach. PartOf= makes systemd re-run this
+# oneshot whenever the watchdog (re)starts, so a slice teardown/recreate re-establishes the
+# attach. (We attach to kgsm.slice, the STABLE parent — not the per-restart watchdog service
+# cgroup — so in practice a watchdog restart leaves the attach intact and this is a cheap
+# re-affirm; the PartOf still covers the rare full-slice recreation.)
+After=kgsm-watchdog.service
+PartOf=kgsm-watchdog.service
+
+[Service]
+Type=oneshot
+# RemainAfterExit so systemctl reports the meter as "active (exited)" once setup succeeds,
+# and so PartOf= stop/restart semantics track it as a unit of the watchdog.
+RemainAfterExit=yes
+
+# Must run as root: load/attach BPF, setcap the monitor, set bpffs perms. This is the ONE
+# privileged piece of the per-server-network feature; the monitor itself stays User=heisen.
+# Adjust the path if the source tree lives elsewhere; the script also accepts overrides via
+# KGSM_BPF_DIR / KGSM_SLICE / KGSM_MONITOR_BIN / KGSM_MONITOR_USER (see the script header).
+ExecStart=/home/heisen/tks/kgsm-monitor/src/Monitor/deploy/net-meter-setup.sh
+
+[Install]
+# Run at boot so the meter is attached before/independently of an interactive session.
+WantedBy=multi-user.target

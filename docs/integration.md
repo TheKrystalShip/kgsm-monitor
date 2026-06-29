@@ -160,10 +160,11 @@ missing key). Below is a fully-annotated example with every field; types and uni
       "ioReadBps": null,      // bytes/sec, or NULL when not accounted (§3.3) — null ≠ zero
       "ioWriteBps": null,
       "pids": 12,             // live process/thread count
-      "diskBytes": 293172125  // on-disk footprint of the instance's files (bytes), slow-cadence walk (§3.5); null until walked
+      "diskBytes": 293172125, // on-disk footprint of the instance's files (bytes), slow-cadence walk (§3.5); null until walked
+      "rxBps": 18342,         // bytes/sec received, eBPF cgroup/skb meter (§3.6) — NULL when un-metered, never 0-for-unknown
+      "txBps": 9120           // bytes/sec transmitted, or NULL (see §3.6)
     }
   ]
-  // NOTE: there is deliberately NO per-server network field — see §3.6.
 }
 ```
 
@@ -194,6 +195,8 @@ missing key). Below is a fully-annotated example with every field; types and uni
 | `servers[].ioWriteBps` | `long?` | bytes/sec or **null** | |
 | `servers[].pids` | `int` | count | Live processes/threads. |
 | `servers[].diskBytes` | `long?` | **bytes** or **null** | On-disk footprint of the instance's working dir (§3.5). `null` = not yet walked / unreadable, **never** 0-for-unknown. |
+| `servers[].rxBps` | `long?` | bytes/sec or **null** | Per-server network **receive**, eBPF cgroup/skb meter (§3.6). `null` = un-metered / cgroup outside `kgsm.slice` / no traffic yet, **never** 0-for-unknown. |
+| `servers[].txBps` | `long?` | bytes/sec or **null** | Per-server network **transmit** (see `rxBps`). |
 
 > **⚠ Unit trap — host CPU vs server CPU are different scales.** `cpu.totalPct` is
 > **0–100 across all cores** (the whole host). `servers[].cpuPctCore` is **percent of one
@@ -264,19 +267,38 @@ temp), summing apparent file sizes. Consequences a consumer should know:
 - **Running servers only.** Like the rest of `servers[]`, a row exists only for a running
   server, so a stopped server's footprint is simply absent (it isn't in the frame at all).
 
-### 3.6 Why there is no per-server **network**
+### 3.6 `rxBps` / `txBps` — per-server network (eBPF cgroup/skb meter)
 
-Per-server network is **deliberately not emitted** — and unlike `diskBytes` it is *deferred*,
-not merely scoped. The honest reason: a **native** server runs in the host network namespace,
-where `/proc/<pid>/net/dev` reports host-wide totals (per-netns, not per-process), and the
-kernel keeps **no per-socket byte counters for UDP** — the transport most game servers use. So
-attributing bytes to a native server needs continuous root-level packet accounting (eBPF, an
-`nftables` per-cgroup counter, or conntrack acct). The monitor is deliberately **read-only**
-and the host's firewall authority (`kgsm-firewall`) is **socket-activated** (invoked on demand,
-not a resident daemon), so neither can count continuously. Until a privileged resident source
-exists, per-server network has no honest value and the field is omitted rather than faked.
-(Container servers have their own netns and *could* be measured via `/proc/<pid>/net/dev`; that
-path is also deferred so the contract stays uniform across kinds.)
+Per-server network **is** emitted now (added 2026-06-29; this reverses the earlier "deferred"
+stance). cgroup v2 has no network controller, so the missing per-cgroup byte totals come from a
+**passive eBPF `cgroup/skb` byte counter** attached **once** to the KGSM parent cgroup
+`/sys/fs/cgroup/kgsm.slice` (both ingress and egress, `BPF_F_ALLOW_MULTI`). `cgroup/skb` programs
+propagate to all descendants, so the one attach covers every present and future instance cgroup
+beneath the slice. It only counts bytes and **always allows the packet** (never drops/reroutes —
+it fits the monitor's observe-never-interfere ethos), keeping totals per cgroup in a pinned BPF
+map. The monitor reads its instance's row each tick (keyed by cgroup id == cgroup dir inode) and
+turns the cumulative totals into a rate, exactly like `ioReadBps`/`ioWriteBps`.
+
+**`null` is honest "unavailable", never 0.** `rxBps`/`txBps` are `null` when:
+
+- the meter isn't set up — the pinned map is absent, or the monitor lacks `cap_bpf` (this host
+  blocks unprivileged `bpf()`); **or**
+- the server's cgroup is **outside `kgsm.slice`** — a `systemd` server (under `system.slice`), a
+  `container` (Docker's own hierarchy), or a `native` server with no live cgroup — so the meter
+  never saw its packets; **or**
+- the server's cgroup exists but **no traffic has been attributed yet** (no row in the map).
+
+Render `null` as "—" / "not available", **not** a flat-zero chart. Once a packet flows the row
+appears and real bytes are reported (rates need two samples, like all rate fields). This means in
+practice today only **`native` servers placed under `kgsm.slice`** (the kgsm-watchdog spawn path)
+carry numbers; other kinds read `null` until their measurement path lands (containers via host
+`veth` is the planned next step).
+
+> **Setup is privileged + one-time.** The eBPF program, an idempotent setup script, and a oneshot
+> systemd unit live in `kgsm-monitor` (`bpf/net_meter.bpf.c`, `deploy/net-meter-setup.sh`,
+> `deploy/kgsm-net-meter.service`). They load+pin the map, attach the programs, make the pin
+> readable by the monitor's user, and grant it `cap_bpf`. Run once (sudo); the oneshot re-attaches
+> on boot and on watchdog restart. Until then every server simply reads `null` here.
 
 ---
 
@@ -404,11 +426,11 @@ no query params, headers, or control endpoints. If you need different behaviour,
   it.
 - **Push / streaming / SSE.** The monitor is pull-only. Streaming + auth + fan-out is the
   job of the API layer above it (the planned aggregator), not the monitor.
-- **Per-server network.** Not measured — **deferred**, see §3.6. Native servers share the host
-  netns and UDP has no per-socket byte counters, so it needs continuous root-level packet
-  accounting (eBPF / nftables / conntrack), which neither the read-only monitor nor the
-  socket-activated `kgsm-firewall` provides. There is no per-server net field until such a
-  source exists; don't expect one to appear additively the way `diskBytes` did.
+- **Per-server network.** Now **measured** (`servers[].rxBps`/`txBps`) via a passive eBPF
+  `cgroup/skb` meter on `kgsm.slice` — see §3.6. It is honest-`null` when the meter isn't set up or
+  the server's cgroup is outside `kgsm.slice` (today: everything but `native`-under-`kgsm.slice`),
+  so treat `null` as "—", not 0. **Container** per-server network (their own netns) is the planned
+  next addition (host `veth` stats); until then containers read `null`.
 - **Auth.** None — the socket's filesystem perms are the boundary. If you need authn/authz,
   you add it in front; don't expect the monitor to.
 

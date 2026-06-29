@@ -223,10 +223,11 @@ internal sealed class CountingInstanceService : IInstanceService
         return new Dictionary<string, Instance>();
     }
 
+    public Dictionary<string, Instance>? GetAllOrNull() => new();
     public Instance? GetInstanceInfo(string instanceName) => throw new NotImplementedException();
     public InstanceRuntimeStatus? GetInstanceStatus(string instanceName) => throw new NotImplementedException();
     public Dictionary<string, Reading<InstanceRuntimeStatus>> GetAllStatuses(bool fast = false) => throw new NotImplementedException();
-    public KgsmResult Install(string blueprintName, string? installDir = null, string? version = null, string? name = null, string? actor = null, string? origin = null) => throw new NotImplementedException();
+    public KgsmResult Install(string blueprintName, string? installDir = null, string? version = null, string? name = null, string? actor = null, string? origin = null, int? port = null) => throw new NotImplementedException();
     public KgsmResult Uninstall(string instanceName, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public ICollection<string> GetLogs(string instanceName, int maxLines = 10) => throw new NotImplementedException();
     public Task<ICollection<string>> GetLogsAsync(string instanceName, int maxLines = 10, CancellationToken cancellationToken = default) => throw new NotImplementedException();
@@ -245,7 +246,7 @@ internal sealed class CountingInstanceService : IInstanceService
     public KgsmResult RestoreBackup(string instanceName, string backupName, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public KgsmResult GenerateId(string blueprintName, string? customName = null) => throw new NotImplementedException();
     public KgsmResult Save(string instanceName) => throw new NotImplementedException();
-    public KgsmResult SendInput(string instanceName, string command) => throw new NotImplementedException();
+    public KgsmResult SendInput(string instanceName, string command, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public KgsmResult FindConfigPath(string instanceName) => throw new NotImplementedException();
     public KgsmResult GetInstanceConfigValue(string instanceName, string key) => throw new NotImplementedException();
     public KgsmResult SetInstanceConfigValue(string instanceName, string key, string value, string? actor = null, string? origin = null) => throw new NotImplementedException();

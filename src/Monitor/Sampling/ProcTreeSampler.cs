@@ -192,7 +192,11 @@ internal sealed partial class ProcTreeSampler
                     IoReadBps: ioReadBps,
                     IoWriteBps: ioWriteBps,
                     Pids: pidCount,
-                    DiskBytes: null)); // merged from DiskUsageSampler in ServerSampler.Sample()
+                    DiskBytes: null, // merged from DiskUsageSampler in ServerSampler.Sample()
+                    // A native server with no live cgroup isn't under kgsm.slice, so the eBPF
+                    // cgroup/skb meter never sees its packets → no per-server network here.
+                    RxBps: null,
+                    TxBps: null));
             }
         }
 

@@ -125,10 +125,19 @@ public sealed record SensorReading(string Chip, string? Label, double ValueC);
 /// Symlinks are not followed (no double-count). <c>null</c> when not yet walked or the
 /// directory can't be read — never a fabricated 0. Only attached to running servers
 /// (the frame lists running servers only), so a stopped server's footprint is absent.
-/// <em>Per-server network is deliberately omitted</em> — it can't be measured honestly
-/// for native (host-netns, UDP) servers without continuous root-level packet accounting,
-/// which no resident component provides (kgsm-firewall is socket-activated, not a daemon).
 /// </param>
+/// <param name="RxBps">
+/// Per-server network <em>receive</em> throughput in bytes/sec, measured by a passive eBPF
+/// <c>cgroup/skb</c> byte counter attached once to the KGSM parent cgroup (<c>kgsm.slice</c>)
+/// and read from a pinned BPF map keyed by cgroup id (see <c>NetworkCgroupSource</c>). A rate,
+/// like the I/O counters, so it needs two samples. <c>null</c> — never a fabricated 0 — when the
+/// meter isn't measuring this server: the eBPF meter isn't set up (pin missing / cap not granted),
+/// or the server's cgroup is outside <c>kgsm.slice</c> (a <c>systemd</c> or <c>container</c> server,
+/// or a <c>native</c> server with no live cgroup) so the counter never sees its packets, or no
+/// traffic has been attributed to its cgroup yet. Same honest nullable contract as
+/// <paramref name="IoReadBps"/>.
+/// </param>
+/// <param name="TxBps">Per-server network <em>transmit</em> throughput, bytes/sec, or null (see <paramref name="RxBps"/>).</param>
 public sealed record ServerMetrics(
     string Id,
     string Name,
@@ -138,4 +147,6 @@ public sealed record ServerMetrics(
     long? IoReadBps,
     long? IoWriteBps,
     int Pids,
-    long? DiskBytes);
+    long? DiskBytes,
+    long? RxBps,
+    long? TxBps);
