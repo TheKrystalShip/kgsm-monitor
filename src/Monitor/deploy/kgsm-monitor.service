@@ -21,11 +21,11 @@ ExecStart=/opt/kgsm-monitor/kgsm-monitor
 Environment=KGSM_MONITOR_SOCKET=/run/kgsm-monitor/metrics.sock
 Environment=KGSM_MONITOR_SOCKET_MODE=660
 
-# Per-server sampling ON: point at the CANONICAL kgsm.sh. The dev checkout under /home is
-# authoritative on this host (kgsm-watchdog points at the same path; /usr/local/bin/kgsm is
-# the stale old version). Unset this to run host-only. ProtectHome is deliberately NOT set —
-# kgsm.sh and its config live under /home and the daemon runs as that home's user.
-Environment=KGSM_MONITOR_KGSM_PATH=/home/heisen/tks/kgsm/kgsm.sh
+# Per-server sampling ON: point at /usr/local/bin/kgsm — the canonical kgsm symlink every
+# consumer shares (kgsm-watchdog points at the same path). Repoint that symlink to move the
+# whole host at once, no unit edits. Unset this to run host-only. ProtectHome is deliberately
+# NOT set — kgsm's instances/config live under /home and the daemon runs as that home's user.
+Environment=KGSM_MONITOR_KGSM_PATH=/usr/local/bin/kgsm
 
 # Event socket the monitor BINDS for low-latency watch-list deltas (Slice 2b). kgsm connects
 # to it (via socat) to push instance_* lifecycle events so a started/stopped server is
