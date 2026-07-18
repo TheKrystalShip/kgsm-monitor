@@ -13,7 +13,10 @@ has a monitor-specific manifestation, it's called out below.
 A Native-AOT daemon that samples **host + per-game-server** metrics straight from the Linux
 kernel (`/proc`, `/sys`, cgroup v2 — never shelling `top`/`ps`), holds the latest frame in
 memory, and serves it over a **unix-socket `GET /metrics`** (HTTP/1.1, unauthenticated,
-pull-only, no history). Authoritative docs:
+pull-only). It is also the **single source of truth for metrics history**: a persist loop
+writes the latest frame to a SQLite store (raw + rollup tiers) and `GET /metrics/history`
+serves windowed queries (see `src/Monitor/History/`; kgsm-api relays this endpoint verbatim).
+Authoritative docs:
 
 - **`PLAN.md`** — full design, decisions, slice-by-slice tracker.
 - **`docs/integration.md`** — the consumer contract (what kgsm-api / any scraper must handle).

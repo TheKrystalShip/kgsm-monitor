@@ -13,7 +13,7 @@
 
     <RootNamespace>TheKrystalShip.KGSM.Monitor</RootNamespace>
     <AssemblyName>kgsm-monitor</AssemblyName>
-    <Version>1.3.0</Version>
+    <Version>1.4.0</Version>
 
     <!-- Required by the source-generated [LibraryImport] sysconf(_SC_CLK_TCK) p/invoke in
          ProcTreeSampler (Slice 3). The generated marshalling stub uses unsafe; no hand-written
@@ -54,6 +54,22 @@
          the watch-list stayed empty, and `servers` was permanently []. 1.22.0 also
          carries Instance.CgroupPath (native cgroup addressing) the resolver needs. -->
     <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="1.28.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Raw ADO SQLite for the metrics-history store (the monitor is the single source of truth for
+         history). Microsoft.Data.Sqlite (NOT EF Core — EF is not AOT-safe) bundles the e_sqlite3 native
+         lib via SQLitePCLRaw.bundle_e_sqlite3, which the AOT publish emits alongside the binary. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.5" />
+  </ItemGroup>
+
+  <!-- Scoped NuGet-audit suppression (NOT a blanket NuGetAudit=off): GHSA-2m69-gcr7-jv3q is an
+       advisory on the native SQLite lib pulled TRANSITIVELY by Microsoft.Data.Sqlite
+       (SQLitePCLRaw.lib.e_sqlite3 2.1.11) — the latest published build of that native lib, no fixed
+       version to move to yet. Exposure is minimal: SQLite stores only this host's local metrics history
+       on a trusted host (no untrusted SQL, no network DB). DELETE this when a patched bundle ships. -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
   </ItemGroup>
 
   <Target Name="SetSourceRevisionId" BeforeTargets="GetAssemblyVersion;GenerateAssemblyInfo;CoreCompile"

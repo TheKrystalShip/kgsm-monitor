@@ -1,6 +1,7 @@
 using TheKrystalShip.KGSM.Extensions;
 using TheKrystalShip.KGSM.Monitor;
 using TheKrystalShip.KGSM.Monitor.Contracts;
+using TheKrystalShip.KGSM.Monitor.History;
 using TheKrystalShip.KGSM.Monitor.Sampling;
 
 var builder = WebApplication.CreateSlimBuilder(args);
@@ -46,6 +47,16 @@ if (options.KgsmEnabled)
 builder.Services.AddSingleton<MetricsSampler>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MetricsSampler>());
 
+// Metrics history (opt-out via KGSM_MONITOR_HISTORY_DISABLED): the monitor is the single source of
+// truth for history. The persist loop flushes the latest frame to SQLite every KGSM_MONITOR_PERSIST_MS;
+// maintenance rolls up + prunes; GET /metrics/history serves windowed queries. Raw ADO SQLite (AOT-safe).
+if (options.HistoryEnabled)
+{
+    builder.Services.AddSingleton<HistoryStore>();
+    builder.Services.AddHostedService<MetricsPersistService>();
+    builder.Services.AddHostedService<MetricsMaintenanceService>();
+}
+
 // Server -> client only, and the only consumer is the local KGSM API. Bind a unix
 // domain socket (no exposed TCP port; the socket's filesystem perms are the boundary).
 builder.WebHost.ConfigureKestrel(kestrel =>
@@ -87,6 +98,22 @@ app.MapGet("/metrics", (MetricsSampler sampler) =>
         ? Results.StatusCode(StatusCodes.Status503ServiceUnavailable)
         : Results.Json(snapshot, MonitorJsonContext.Default.Snapshot);
 });
+
+// Windowed metrics history. Primitive query params only (AOT-safe minimal-API binding). Tier is
+// chosen automatically by range (≤ raw retention → raw, else rollup). Serialized via the daemon-local
+// history JSON context — the shared MonitorJsonContext (Snapshot) is untouched. Only mapped when
+// history is enabled (the store singleton exists).
+if (options.HistoryEnabled)
+{
+    app.MapGet("/metrics/history", async (HistoryStore store, string? kind, string? id, string? range, CancellationToken ct) =>
+    {
+        string entityKind = kind == "host" ? "host" : "server";
+        if (string.IsNullOrEmpty(id))
+            return Results.BadRequest();
+        MetricsHistoryResponse resp = await store.QueryHistoryAsync(entityKind, id, range, ct);
+        return Results.Json(resp, MonitorHistoryJsonContext.Default.MetricsHistoryResponse);
+    });
+}
 
 app.Logger.LogInformation(
     "kgsm-monitor listening on unix:{Socket} (interval {Interval}ms)",

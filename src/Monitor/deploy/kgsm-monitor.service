@@ -45,6 +45,12 @@ EnvironmentFile=-/etc/kgsm-monitor/kgsm-monitor.env
 RuntimeDirectory=kgsm-monitor
 RuntimeDirectoryMode=0750
 
+# systemd creates /var/lib/kgsm-monitor owned by this user (persistent across reboots) for the
+# metrics-history SQLite store (KGSM_MONITOR_DB_PATH defaults inside it). The runtime dir above is
+# tmpfs — unsuitable for a DB that must survive a restart.
+StateDirectory=kgsm-monitor
+StateDirectoryMode=0750
+
 Restart=always
 RestartSec=2
 

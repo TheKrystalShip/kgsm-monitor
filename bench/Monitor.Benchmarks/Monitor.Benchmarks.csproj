@@ -16,6 +16,11 @@
     <ProjectReference Include="../../src/Monitor/Monitor.csproj" />
   </ItemGroup>
 
+  <!-- Inherited via Monitor's Microsoft.Data.Sqlite; see Monitor.csproj for the rationale. -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
   </ItemGroup>

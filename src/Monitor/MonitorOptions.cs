@@ -83,6 +83,42 @@ public sealed class MonitorOptions
     /// </summary>
     public int DiskUsageMs { get; init; } = 60_000;
 
+    /// <summary>
+    /// Identity this host persists its <c>host</c>-kind metrics under (the <c>entity_id</c> of host
+    /// rows). <c>KGSM_MONITOR_HOST_ID</c>. Defaults to the machine name — the same default kgsm-api
+    /// uses for its own host id, so the api's history queries (which pass its host id) line up with
+    /// the rows the monitor stored. Set both to the same value when overriding.
+    /// </summary>
+    public string HostId { get; init; } = Environment.MachineName;
+
+    /// <summary>Whether the monitor persists + serves metrics history. <c>KGSM_MONITOR_HISTORY_DISABLED</c>
+    /// (default enabled). When off, the persist/maintenance loops and the <c>/metrics/history</c>
+    /// endpoint are not wired — the monitor runs live-only.</summary>
+    public bool HistoryEnabled { get; init; } = true;
+
+    /// <summary>SQLite file for the metrics history store. <c>KGSM_MONITOR_DB_PATH</c>. Defaults under
+    /// the systemd <c>StateDirectory</c> (<c>/var/lib/kgsm-monitor</c>, persistent) — NOT the tmpfs
+    /// runtime dir where the socket lives.</summary>
+    public string HistoryDbPath { get; init; } = "/var/lib/kgsm-monitor/metrics.db";
+
+    /// <summary>How often the persist loop flushes the latest frame to history, ms.
+    /// <c>KGSM_MONITOR_PERSIST_MS</c>. Default 15s, floor 1s (decoupled from the 1&#160;Hz sample tick).</summary>
+    public int PersistMs { get; init; } = 15_000;
+
+    /// <summary>Raw-tier retention, hours. <c>KGSM_MONITOR_RAW_RETENTION_HOURS</c>. Default 24. Also the
+    /// tier-select boundary: a query range at or under this reads raw, above it reads rollup.</summary>
+    public int RawRetentionHours { get; init; } = 24;
+
+    /// <summary>Rollup bucket width, minutes. <c>KGSM_MONITOR_ROLLUP_STEP_MIN</c>. Default 5.</summary>
+    public int RollupStepMin { get; init; } = 5;
+
+    /// <summary>Rollup-tier retention, days. <c>KGSM_MONITOR_ROLLUP_RETENTION_DAYS</c>. Default 30.</summary>
+    public int RollupRetentionDays { get; init; } = 30;
+
+    /// <summary>How often maintenance (rollup + prune + vacuum) runs, ms. <c>KGSM_MONITOR_MAINT_MS</c>.
+    /// Default 60s, floor 1s.</summary>
+    public int MaintenanceMs { get; init; } = 60_000;
+
     /// <summary>True when per-server sampling is configured (a KGSM path was provided).</summary>
     public bool KgsmEnabled => KgsmPath.Length > 0;
 
@@ -106,6 +142,26 @@ public sealed class MonitorOptions
         if (int.TryParse(Env("KGSM_MONITOR_DISK_USAGE_MS"), out int du) && du >= 5000)
             diskUsage = du;
 
+        int persist = defaults.PersistMs;
+        if (int.TryParse(Env("KGSM_MONITOR_PERSIST_MS"), out int pm) && pm >= 1000)
+            persist = pm;
+
+        int rawRetention = defaults.RawRetentionHours;
+        if (int.TryParse(Env("KGSM_MONITOR_RAW_RETENTION_HOURS"), out int rr) && rr >= 1)
+            rawRetention = rr;
+
+        int rollupStep = defaults.RollupStepMin;
+        if (int.TryParse(Env("KGSM_MONITOR_ROLLUP_STEP_MIN"), out int rst) && rst >= 1)
+            rollupStep = rst;
+
+        int rollupRetention = defaults.RollupRetentionDays;
+        if (int.TryParse(Env("KGSM_MONITOR_ROLLUP_RETENTION_DAYS"), out int rrd) && rrd >= 1)
+            rollupRetention = rrd;
+
+        int maint = defaults.MaintenanceMs;
+        if (int.TryParse(Env("KGSM_MONITOR_MAINT_MS"), out int mm) && mm >= 1000)
+            maint = mm;
+
         UnixFileMode mode = defaults.SocketMode;
         if (Env("KGSM_MONITOR_SOCKET_MODE") is { Length: > 0 } modeStr)
         {
@@ -125,6 +181,14 @@ public sealed class MonitorOptions
             ServerResyncMs = resync,
             DiskUsageMs = diskUsage,
             EventsEnabled = ParseBool(Env("KGSM_MONITOR_EVENTS"), defaults.EventsEnabled),
+            HostId = Env("KGSM_MONITOR_HOST_ID") is { Length: > 0 } hid ? hid : defaults.HostId,
+            HistoryEnabled = !ParseBool(Env("KGSM_MONITOR_HISTORY_DISABLED"), false),
+            HistoryDbPath = Env("KGSM_MONITOR_DB_PATH") is { Length: > 0 } db ? db : defaults.HistoryDbPath,
+            PersistMs = persist,
+            RawRetentionHours = rawRetention,
+            RollupStepMin = rollupStep,
+            RollupRetentionDays = rollupRetention,
+            MaintenanceMs = maint,
         };
     }
 

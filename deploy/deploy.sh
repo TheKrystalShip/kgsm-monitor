@@ -107,6 +107,20 @@ STOPPED=1
 log "installing binary → ${PREFIX}/kgsm-monitor"
 install -m 0755 "$PUBLISH_DIR/kgsm-monitor" "$PREFIX/kgsm-monitor"
 
+# Native shared libs the AOT binary loads at runtime via dlopen (NOT linked into the ILC output):
+# SQLitePCLRaw ships libe_sqlite3.so as a separate native asset for the metrics-history store, resolved
+# from the binary's own directory. Copy every .so from the publish dir beside the binary, and prune any
+# that a prior build left behind but this one no longer emits, so the install tree matches the publish.
+for so in "$PREFIX"/*.so; do
+    [[ -e "$so" && ! -e "$PUBLISH_DIR/$(basename "$so")" ]] && { log "pruning stale native lib $(basename "$so")"; rm -f "$so"; }
+done
+shopt -s nullglob
+for so in "$PUBLISH_DIR"/*.so; do
+    log "installing native lib → ${PREFIX}/$(basename "$so")"
+    install -m 0755 "$so" "$PREFIX/$(basename "$so")"
+done
+shopt -u nullglob
+
 # Settings file → beside the binary, where the daemon loads it from AppContext.BaseDirectory (Program.cs).
 # WITHOUT this the daemon never sees its settings (the slim builder's content root is "/" under systemd),
 # so the ASP.NET log level silently stays at the chatty Information default and floods journald on every
