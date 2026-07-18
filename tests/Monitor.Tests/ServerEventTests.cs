@@ -244,6 +244,7 @@ internal sealed class CountingInstanceService : IInstanceService
     public KgsmResult GetBackups(string instanceName) => throw new NotImplementedException();
     public KgsmResult CreateBackup(string instanceName, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public KgsmResult RestoreBackup(string instanceName, string backupName, string? actor = null, string? origin = null) => throw new NotImplementedException();
+    public KgsmResult PruneBackups(string instanceName, int keepN, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public KgsmResult GenerateId(string blueprintName, string? customName = null) => throw new NotImplementedException();
     public KgsmResult Save(string instanceName) => throw new NotImplementedException();
     public KgsmResult SendInput(string instanceName, string command, string? actor = null, string? origin = null) => throw new NotImplementedException();
@@ -273,6 +274,11 @@ internal sealed class RecordingEventService : IEventService
 
     public Task FireAsync(EventDataBase data) =>
         _handlers.TryGetValue(data.GetType(), out var handler) ? handler(data) : Task.CompletedTask;
+
+    // Not exercised by ServerEventTests (that's the raw-handler dispatch path covered by
+    // EventHistoryStore/EventPersistService tests via a real EventService+socket); a no-op
+    // fake here just needs to satisfy the interface.
+    public void RegisterRawHandler(Func<EventWrapper, Task> handler) { }
 
     public void Dispose() { }
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

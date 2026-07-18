@@ -13,7 +13,7 @@
 
     <RootNamespace>TheKrystalShip.KGSM.Monitor</RootNamespace>
     <AssemblyName>kgsm-monitor</AssemblyName>
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
 
     <!-- Required by the source-generated [LibraryImport] sysconf(_SC_CLK_TCK) p/invoke in
          ProcTreeSampler (Slice 3). The generated marshalling stub uses unsafe; no hand-written
@@ -43,17 +43,16 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The single KGSM chokepoint (instance resync + event watch + resolution
-         metadata) for Slice 2 per-server cgroup metrics. Consumed as the published
-         NuGet package; the net9 lib is IsAotCompatible, so consuming it from this
-         net10 AOT app is a verified pattern.
-         Pinned to 1.22.0: 1.5.0 modelled Instance.ports as an opaque STRING, but
-         kgsm now emits the structured `ports` array ([{start,end,protocol}], the
-         canonical-port-format break at lib 1.10.0). On the old pin the per-server
-         resync threw on the detailed instance-list JSON ("StartArray as string"),
-         the watch-list stayed empty, and `servers` was permanently []. 1.22.0 also
-         carries Instance.CgroupPath (native cgroup addressing) the resolver needs. -->
-    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="1.28.0" />
+    <!-- The single KGSM chokepoint (instance resync + event watch + resolution metadata) for
+         per-server cgroup metrics AND (1.36.0+) engine event-history persistence. Consumed as the
+         published NuGet package; the net9 lib is IsAotCompatible, so consuming it from this net10 AOT
+         app is a verified pattern. Instance.ports is the structured array
+         ([{start,end,protocol}], the canonical port format); Instance.CgroupPath supplies native
+         cgroup addressing for the resolver. 1.36.0 adds IEventService.RegisterRawHandler (every
+         deserialized event envelope, known or unknown type — src/Monitor/History/EventPersistService.cs)
+         and Events.AuditId.ForEvent (the deterministic evt_<hash> id shared with kgsm-api, so both
+         sides compute the same id with zero coordination). -->
+    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="1.36.0" />
   </ItemGroup>
 
   <ItemGroup>

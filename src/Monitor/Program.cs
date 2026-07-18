@@ -54,6 +54,27 @@ if (options.HistoryEnabled)
 {
     builder.Services.AddSingleton<HistoryStore>();
     builder.Services.AddHostedService<MetricsPersistService>();
+}
+
+// Event history (event-history-plan.md Phase B): the monitor is the single source of truth for KGSM
+// ENGINE events (server-triggered lifecycle/config/etc, delivered over the event socket). Gated on
+// KgsmEnabled (needs IEventService, only registered above under that flag) AND EventHistoryEnabled
+// (an independent opt-out from metrics history). A separate events.db (own WAL/single-writer gate) —
+// no contention with the 15s metrics flusher. GET /events serves windowed/filtered queries; kgsm-api
+// merges this with its own API-only audit rows at read time (Phase C) — the monitor stays a neutral
+// leaf with no dependency on the API.
+if (options.KgsmEnabled && options.EventHistoryEnabled)
+{
+    builder.Services.AddSingleton<EventHistoryStore>();
+    builder.Services.AddHostedService<EventPersistService>();
+}
+
+// One shared rollup/prune/vacuum loop for whichever history store(s) are active. Registered whenever
+// either metrics or event history is on; MetricsMaintenanceService takes both stores as OPTIONAL
+// constructor params so it degrades correctly if only one is enabled (they're independently
+// toggleable — see MonitorOptions.HistoryEnabled / EventHistoryEnabled).
+if (options.HistoryEnabled || (options.KgsmEnabled && options.EventHistoryEnabled))
+{
     builder.Services.AddHostedService<MetricsMaintenanceService>();
 }
 
@@ -112,6 +133,29 @@ if (options.HistoryEnabled)
             return Results.BadRequest();
         MetricsHistoryResponse resp = await store.QueryHistoryAsync(entityKind, id, range, ct);
         return Results.Json(resp, MonitorHistoryJsonContext.Default.MetricsHistoryResponse);
+    });
+}
+
+// Windowed/filtered engine-event history. Primitive query params only (AOT-safe minimal-API
+// binding); ms/int values are parsed by hand. ts-DESC, composite (before_ts, before_id) keyset
+// cursor. Serialized via the same daemon-local history JSON context as /metrics/history. Only mapped
+// when event history is enabled (the store singleton exists).
+if (options.KgsmEnabled && options.EventHistoryEnabled)
+{
+    app.MapGet("/events", async (
+        EventHistoryStore store,
+        string? instance, string? type, string? since, string? until,
+        string? before_ts, string? before_id, string? limit,
+        CancellationToken ct) =>
+    {
+        long? sinceMs = long.TryParse(since, out long sv) ? sv : null;
+        long? untilMs = long.TryParse(until, out long uv) ? uv : null;
+        long? beforeTsMs = long.TryParse(before_ts, out long bv) ? bv : null;
+        int lim = int.TryParse(limit, out int lv) ? lv : EventHistoryStore.DefaultLimit;
+
+        EventHistoryResponse resp = await store.QueryEventsAsync(
+            instance, type, sinceMs, untilMs, beforeTsMs, before_id, lim, ct);
+        return Results.Json(resp, MonitorHistoryJsonContext.Default.EventHistoryResponse);
     });
 }
 

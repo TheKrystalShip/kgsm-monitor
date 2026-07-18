@@ -119,6 +119,21 @@ public sealed class MonitorOptions
     /// Default 60s, floor 1s.</summary>
     public int MaintenanceMs { get; init; } = 60_000;
 
+    /// <summary>Whether the monitor persists + serves KGSM engine-event history.
+    /// <c>KGSM_MONITOR_EVENT_HISTORY_DISABLED</c> (default enabled). Independent of
+    /// <see cref="HistoryEnabled"/> (metrics) — either can be toggled without the other. Has no
+    /// effect unless <see cref="KgsmEnabled"/> (event history needs the KGSM event socket).</summary>
+    public bool EventHistoryEnabled { get; init; } = true;
+
+    /// <summary>SQLite file for the event-history store. <c>KGSM_MONITOR_EVENTS_DB_PATH</c>. Defaults
+    /// under the systemd <c>StateDirectory</c> (<c>/var/lib/kgsm-monitor</c>), a separate file from
+    /// <see cref="HistoryDbPath"/> — its own WAL/writer, no contention with the metrics flusher.</summary>
+    public string EventsDbPath { get; init; } = "/var/lib/kgsm-monitor/events.db";
+
+    /// <summary>Event-history retention, days. <c>KGSM_MONITOR_EVENT_RETENTION_DAYS</c>. Default 30.
+    /// No rollup tier (discrete facts, not a sampled series) — rows simply age out at this cutoff.</summary>
+    public int EventRetentionDays { get; init; } = 30;
+
     /// <summary>True when per-server sampling is configured (a KGSM path was provided).</summary>
     public bool KgsmEnabled => KgsmPath.Length > 0;
 
@@ -162,6 +177,10 @@ public sealed class MonitorOptions
         if (int.TryParse(Env("KGSM_MONITOR_MAINT_MS"), out int mm) && mm >= 1000)
             maint = mm;
 
+        int eventRetention = defaults.EventRetentionDays;
+        if (int.TryParse(Env("KGSM_MONITOR_EVENT_RETENTION_DAYS"), out int erd) && erd >= 1)
+            eventRetention = erd;
+
         UnixFileMode mode = defaults.SocketMode;
         if (Env("KGSM_MONITOR_SOCKET_MODE") is { Length: > 0 } modeStr)
         {
@@ -189,6 +208,9 @@ public sealed class MonitorOptions
             RollupStepMin = rollupStep,
             RollupRetentionDays = rollupRetention,
             MaintenanceMs = maint,
+            EventHistoryEnabled = !ParseBool(Env("KGSM_MONITOR_EVENT_HISTORY_DISABLED"), false),
+            EventsDbPath = Env("KGSM_MONITOR_EVENTS_DB_PATH") is { Length: > 0 } edb ? edb : defaults.EventsDbPath,
+            EventRetentionDays = eventRetention,
         };
     }
 

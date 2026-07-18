@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-18
+
+### Added
+- **Event history** — the monitor is the single source of truth for KGSM *engine* events (Phase B of
+  `event-history-plan.md`). A raw handler (`IEventService.RegisterRawHandler`, kgsm-lib 1.36.0) fires
+  on every deserialized event envelope, known or unknown type, and persists it to a dedicated
+  `events.db` (own WAL, own single-writer gate — no contention with the metrics flusher) via
+  `INSERT OR IGNORE` on the deterministic `evt_<hash>` id (`Events.AuditId.ForEvent`), so a
+  redelivered event never double-inserts. `GET /events?instance=&type=&since=&until=&before_ts=&
+  before_id=&limit=` serves ts-DESC windowed/filtered queries with a composite `(ts, id)` keyset
+  cursor. Rows are stored raw and neutral (no domain shaping — that stays kgsm-api's read-time
+  concern); `instance`/`actor`/`origin` are `NULL` when the emitter supplied none, never fabricated.
+  No rollup tier (discrete facts, not a sampled series) — retention is a straight prune.
+- Config knobs: `KGSM_MONITOR_EVENTS_DB_PATH` (`/var/lib/kgsm-monitor/events.db`),
+  `KGSM_MONITOR_EVENT_HISTORY_DISABLED` (default enabled, independent of the metrics-history flag),
+  `KGSM_MONITOR_EVENT_RETENTION_DAYS` (default 30).
+- The shared rollup/prune/vacuum maintenance loop now also prunes `events.db` in the same pass when
+  event history is enabled; metrics and event history are independently toggleable, so the loop runs
+  whenever either is on and degrades correctly if only one store is wired.
+
+### Notes
+- Event-history persistence is gated on `KgsmEnabled` (needs the KGSM event socket) *and*
+  `EventHistoryEnabled`. `Monitor.Contracts` is unchanged — the event-history DTOs are daemon-local
+  (`src/Monitor/History/EventHistoryDto.cs`), same pattern as metrics history.
+- Bumps the `TheKrystalShip.KGSM.Lib` pin to 1.36.0 (`RegisterRawHandler` + `AuditId.ForEvent`).
+
 ## [1.4.0] - 2026-07-18
 
 ### Added
