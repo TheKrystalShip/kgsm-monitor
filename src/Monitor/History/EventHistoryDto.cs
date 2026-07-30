@@ -21,7 +21,10 @@ public sealed record EventHistoryResponse(
 
 /// <summary>
 /// One persisted engine event row, as it arrived on the event socket. <see cref="Instance"/> is
-/// <see langword="null"/> for host/global events; <see cref="Actor"/>/<see cref="Origin"/> are
+/// <see langword="null"/> for host/global events and for blueprint-scoped events (whose subject is a
+/// <see cref="Blueprint"/>, not an instance — Phase 2 of <c>blueprint-editor-plan.md</c>); conversely
+/// <see cref="Blueprint"/> is <see langword="null"/> for every instance-scoped event — the two columns
+/// are orthogonal, never one backing the other. <see cref="Actor"/>/<see cref="Origin"/> are
 /// <see langword="null"/> when the emitter supplied no enrichment (e.g. a bare CLI call) — never
 /// fabricated. <see cref="Data"/> is the event-specific payload, relayed verbatim and opaque to the
 /// monitor (a per-event shape only the domain-aware reader — kgsm-api's <c>AuditMapping</c>, or the
@@ -32,6 +35,7 @@ public sealed record EventHistoryItem(
     DateTimeOffset Ts,
     string Type,
     string? Instance,
+    string? Blueprint,
     string? Actor,
     string? Origin,
     JsonElement? Data);

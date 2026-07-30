@@ -70,13 +70,15 @@ public sealed class EventHistoryStore : IDisposable
                       ts          INTEGER NOT NULL,
                       event_type  TEXT    NOT NULL,
                       instance    TEXT,
+                      blueprint   TEXT,
                       actor       TEXT,
                       origin      TEXT,
                       hostname    TEXT,
                       data        TEXT
                     );
-                    CREATE INDEX IF NOT EXISTS ix_event_ts          ON event(ts);
-                    CREATE INDEX IF NOT EXISTS ix_event_instance_ts ON event(instance, ts);
+                    CREATE INDEX IF NOT EXISTS ix_event_ts            ON event(ts);
+                    CREATE INDEX IF NOT EXISTS ix_event_instance_ts   ON event(instance, ts);
+                    CREATE INDEX IF NOT EXISTS ix_event_blueprint_ts  ON event(blueprint, ts);
                     """;
                 await ddl.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
@@ -115,6 +117,7 @@ public sealed class EventHistoryStore : IDisposable
         }
 
         string? instance = ExtractInstanceName(wrapper.Data);
+        string? blueprint = ExtractBlueprintName(wrapper.Data);
         string? data = wrapper.Data.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
             ? null
             : wrapper.Data.GetRawText();
@@ -126,13 +129,14 @@ public sealed class EventHistoryStore : IDisposable
             await using SqliteCommand cmd = conn.CreateCommand();
             cmd.CommandText =
                 """
-                INSERT OR IGNORE INTO event (id, ts, event_type, instance, actor, origin, hostname, data)
-                VALUES ($id, $ts, $type, $instance, $actor, $origin, $hostname, $data)
+                INSERT OR IGNORE INTO event (id, ts, event_type, instance, blueprint, actor, origin, hostname, data)
+                VALUES ($id, $ts, $type, $instance, $blueprint, $actor, $origin, $hostname, $data)
                 """;
             cmd.Parameters.AddWithValue("$id", id);
             cmd.Parameters.AddWithValue("$ts", ts);
             cmd.Parameters.AddWithValue("$type", wrapper.EventType);
             cmd.Parameters.AddWithValue("$instance", (object?)instance ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$blueprint", (object?)blueprint ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$actor", (object?)wrapper.Actor ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$origin", (object?)wrapper.Origin ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$hostname", (object?)wrapper.Hostname ?? DBNull.Value);
@@ -152,6 +156,27 @@ public sealed class EventHistoryStore : IDisposable
             && instanceName.ValueKind == JsonValueKind.String)
         {
             string? name = instanceName.GetString();
+            return string.IsNullOrEmpty(name) ? null : name;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Mirror of <see cref="ExtractInstanceName"/> for blueprint-scoped events. A blueprint event's
+    /// subject is a <c>BlueprintName</c>, not an <see cref="EventDataBase.InstanceName"/>: the engine
+    /// emits these with no instance relationship (Phase 2 of <c>blueprint-editor-plan.md</c>), and
+    /// forcing them through <c>InstanceName</c> would invent one. Only <c>blueprint_*</c> envelopes
+    /// carry this key, so the <c>blueprint</c> column is <see langword="null"/> for every other event —
+    /// never fabricated, the same honest-null contract as the <c>instance</c> column.
+    /// </summary>
+    private static string? ExtractBlueprintName(JsonElement data)
+    {
+        if (data.ValueKind == JsonValueKind.Object
+            && data.TryGetProperty("BlueprintName", out JsonElement blueprintName)
+            && blueprintName.ValueKind == JsonValueKind.String)
+        {
+            string? name = blueprintName.GetString();
             return string.IsNullOrEmpty(name) ? null : name;
         }
 
@@ -188,6 +213,13 @@ public sealed class EventHistoryStore : IDisposable
     /// are set from the last row only when the page came back full (a partial page means "no more
     /// rows", so the cursor is honestly <see langword="null"/>).
     /// </summary>
+    /// <remarks>
+    /// <paramref name="blueprint"/> filters on the <c>blueprint</c> column that blueprint-scoped events
+    /// (Phase 2 of <c>blueprint-editor-plan.md</c>) populate with the event's <c>BlueprintName</c>. An
+    /// instance-scoped and a blueprint-scoped row for the same name are distinct and never conflated —
+    /// a <c>?blueprint=factorio</c> query returns blueprint file edits, an <c>?instance=factorio</c>
+    /// query returns that server instance's lifecycle, and never the other way around.
+    /// </remarks>
     public async Task<EventHistoryResponse> QueryEventsAsync(
         string? instance,
         string? type,
@@ -196,17 +228,20 @@ public sealed class EventHistoryStore : IDisposable
         long? beforeTs,
         string? beforeId,
         int limit,
+        string? blueprint = null,
         CancellationToken ct = default)
     {
         instance = string.IsNullOrEmpty(instance) ? null : instance;
         type = string.IsNullOrEmpty(type) ? null : type;
         beforeId = string.IsNullOrEmpty(beforeId) ? null : beforeId;
+        blueprint = string.IsNullOrEmpty(blueprint) ? null : blueprint;
 
         int cappedLimit = limit <= 0 ? DefaultLimit : Math.Min(limit, MaxLimit);
 
         var sql = new System.Text.StringBuilder(
-            "SELECT id, ts, event_type, instance, actor, origin, data FROM event WHERE 1 = 1");
+            "SELECT id, ts, event_type, instance, blueprint, actor, origin, data FROM event WHERE 1 = 1");
         if (instance is not null) sql.Append(" AND instance = $instance");
+        if (blueprint is not null) sql.Append(" AND blueprint = $blueprint");
         if (type is not null) sql.Append(" AND event_type = $type");
         if (sinceMs is not null) sql.Append(" AND ts >= $since");
         if (untilMs is not null) sql.Append(" AND ts <= $until");
@@ -225,6 +260,7 @@ public sealed class EventHistoryStore : IDisposable
             await using SqliteCommand cmd = conn.CreateCommand();
             cmd.CommandText = sql.ToString();
             if (instance is not null) cmd.Parameters.AddWithValue("$instance", instance);
+            if (blueprint is not null) cmd.Parameters.AddWithValue("$blueprint", blueprint);
             if (type is not null) cmd.Parameters.AddWithValue("$type", type);
             if (sinceMs is not null) cmd.Parameters.AddWithValue("$since", sinceMs.Value);
             if (untilMs is not null) cmd.Parameters.AddWithValue("$until", untilMs.Value);
@@ -239,9 +275,10 @@ public sealed class EventHistoryStore : IDisposable
                 long ts = reader.GetInt64(1);
                 string eventType = reader.GetString(2);
                 string? rowInstance = reader.IsDBNull(3) ? null : reader.GetString(3);
-                string? actor = reader.IsDBNull(4) ? null : reader.GetString(4);
-                string? origin = reader.IsDBNull(5) ? null : reader.GetString(5);
-                string? dataText = reader.IsDBNull(6) ? null : reader.GetString(6);
+                string? rowBlueprint = reader.IsDBNull(4) ? null : reader.GetString(4);
+                string? actor = reader.IsDBNull(5) ? null : reader.GetString(5);
+                string? origin = reader.IsDBNull(6) ? null : reader.GetString(6);
+                string? dataText = reader.IsDBNull(7) ? null : reader.GetString(7);
 
                 JsonElement? data = null;
                 if (dataText is not null)
@@ -253,7 +290,8 @@ public sealed class EventHistoryStore : IDisposable
                 }
 
                 items.Add(new EventHistoryItem(
-                    id, DateTimeOffset.FromUnixTimeMilliseconds(ts), eventType, rowInstance, actor, origin, data));
+                    id, DateTimeOffset.FromUnixTimeMilliseconds(ts), eventType, rowInstance, rowBlueprint,
+                    actor, origin, data));
             }
         }
         finally { _gate.Release(); }

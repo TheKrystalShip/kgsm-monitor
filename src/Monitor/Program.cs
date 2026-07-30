@@ -144,7 +144,7 @@ if (options.KgsmEnabled && options.EventHistoryEnabled)
 {
     app.MapGet("/events", async (
         EventHistoryStore store,
-        string? instance, string? type, string? since, string? until,
+        string? instance, string? blueprint, string? type, string? since, string? until,
         string? before_ts, string? before_id, string? limit,
         CancellationToken ct) =>
     {
@@ -154,7 +154,7 @@ if (options.KgsmEnabled && options.EventHistoryEnabled)
         int lim = int.TryParse(limit, out int lv) ? lv : EventHistoryStore.DefaultLimit;
 
         EventHistoryResponse resp = await store.QueryEventsAsync(
-            instance, type, sinceMs, untilMs, beforeTsMs, before_id, lim, ct);
+            instance, type, sinceMs, untilMs, beforeTsMs, before_id, lim, blueprint, ct);
         return Results.Json(resp, MonitorHistoryJsonContext.Default.EventHistoryResponse);
     });
 }

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-07-28
+
+### Added
+- **Blueprint-event attribution** — the `event` table carries a `blueprint TEXT` column (additive,
+  NULL by default) that blueprint-scoped engine events (Phase 2 of `blueprint-editor-plan.md`)
+  populate with the event's `BlueprintName`. Unlike `instance`, which an instance-scoped event
+  fills, a blueprint event's subject is a blueprint file — forcing it through `instance` would
+  invent a server relationship that does not exist. The two columns are orthogonal: an
+  instance-scoped row leaves `blueprint` null, a blueprint-scoped row leaves `instance` null, and
+  the `?blueprint=<name>` query filter (mirroring `?instance=`) returns blueprint rows only.
+  Surface: the existing `GET /events` route now also accepts `?blueprint=`. Downstream readers
+  (kgsm-api `MonitorEventShaping`) carry no Server audit target when `instance` is null, so
+  blueprint rows never appear as server rows in `GET /audit` — the columns stay disjoint there
+  too.
+
 ## [1.5.0] - 2026-07-18
 
 ### Added

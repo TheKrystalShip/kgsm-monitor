@@ -59,6 +59,7 @@ public class EventHistoryStoreTests
             Assert.Equal(AuditId.ForEvent(w), item.Id);
             Assert.Equal("instance_started", item.Type);
             Assert.Equal("factorio-test", item.Instance);
+            Assert.Null(item.Blueprint); // a server event is never blueprint-scoped
             Assert.Equal("heisen", item.Actor);
             Assert.Equal("ui", item.Origin);
             Assert.NotNull(item.Data);
@@ -87,6 +88,7 @@ public class EventHistoryStoreTests
 
             EventHistoryItem item = Assert.Single(resp.Events);
             Assert.Null(item.Instance);
+            Assert.Null(item.Blueprint);
             Assert.Null(item.Actor);
             Assert.Null(item.Origin);
         }
@@ -279,6 +281,83 @@ public class EventHistoryStoreTests
                 instance: null, type: null, sinceMs: null, untilMs: null,
                 beforeTs: null, beforeId: null, limit: EventHistoryStore.MaxLimit + 500);
             Assert.Equal(3, resp.Count);
+        }
+        finally { Cleanup(store, db); }
+    }
+
+    // --- blueprint-scoped events (Phase 2 of blueprint-editor-plan.md) --------------------------
+    // A blueprint event's subject is BlueprintName, not InstanceName. The store carries a dedicated
+    // `blueprint` column so such rows are attributable and filterable without overloading `instance`
+    // (which would invent an instance relationship that does not exist). For every other (instance
+    // or host/global) event the blueprint column stays null — never fabricated.
+
+    [Fact]
+    public async Task Blueprint_event_persists_blueprint_name_with_instance_null()
+    {
+        var (store, db) = NewStore();
+        try
+        {
+            var w = Wrapper(
+                eventType: "blueprint_updated",
+                dataJson: """{"BlueprintName":"factorio","Tier":"user","OverridesSystem":true,"Runtime":"native"}""");
+            await store.AppendAsync(w);
+
+            EventHistoryResponse resp = await store.QueryEventsAsync(
+                instance: null, type: null, sinceMs: null, untilMs: null,
+                beforeTs: null, beforeId: null, limit: 200);
+
+            EventHistoryItem item = Assert.Single(resp.Events);
+            Assert.Equal("blueprint_updated", item.Type);
+            Assert.Null(item.Instance); // a blueprint event never carries an instance
+            Assert.Equal("factorio", item.Blueprint); // …but it does carry a blueprint
+            Assert.Equal("factorio", item.Data!.Value.GetProperty("BlueprintName").GetString());
+        }
+        finally { Cleanup(store, db); }
+    }
+
+    [Fact]
+    public async Task Blueprint_filter_returns_only_matching_blueprint_rows()
+    {
+        var (store, db) = NewStore();
+        try
+        {
+            var t0 = DateTimeOffset.UtcNow;
+            await store.AppendAsync(Wrapper(eventType: "blueprint_updated",
+                dataJson: """{"BlueprintName":"factorio"}""", timestamp: t0));
+            await store.AppendAsync(Wrapper(eventType: "blueprint_updated",
+                dataJson: """{"BlueprintName":"factorio"}""", timestamp: t0.AddSeconds(1)));
+            await store.AppendAsync(Wrapper(eventType: "blueprint_updated",
+                dataJson: """{"BlueprintName":"terraria"}""", timestamp: t0.AddSeconds(2)));
+
+            EventHistoryResponse resp = await store.QueryEventsAsync(
+                instance: null, type: null, sinceMs: null, untilMs: null,
+                beforeTs: null, beforeId: null, limit: 200, blueprint: "factorio");
+
+            Assert.Equal(2, resp.Count);
+            Assert.All(resp.Events, i => Assert.Equal("factorio", i.Blueprint));
+        }
+        finally { Cleanup(store, db); }
+    }
+
+    [Fact]
+    public async Task Server_event_persists_instance_and_leaves_blueprint_null()
+    {
+        // The columns are orthogonal — a server event must never have its instance name accidentally
+        // loaded into the blueprint column (which would conflate an instance fact with a blueprint one
+        // and break the ?blueprint= filter for any instance that shares a blueprint's name).
+        var (store, db) = NewStore();
+        try
+        {
+            var w = Wrapper(); // default {"InstanceName":"factorio-test"}, no BlueprintName key
+            await store.AppendAsync(w);
+
+            EventHistoryResponse resp = await store.QueryEventsAsync(
+                instance: null, type: null, sinceMs: null, untilMs: null,
+                beforeTs: null, beforeId: null, limit: 200);
+
+            EventHistoryItem item = Assert.Single(resp.Events);
+            Assert.Equal("factorio-test", item.Instance);
+            Assert.Null(item.Blueprint);
         }
         finally { Cleanup(store, db); }
     }
