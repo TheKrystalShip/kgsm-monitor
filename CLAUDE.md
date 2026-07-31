@@ -44,6 +44,26 @@ dotnet run -c Release --project bench/Monitor.Benchmarks -- --filter '*'   # per
 
 Bash under `deploy/` and `src/Monitor/bpf/` follows the ecosystem `shellcheck`-clean convention.
 
+## Deploying
+
+`deploy/setup.sh` runs **once per host** and is the only part that asks for sudo: it chowns
+`/opt/kgsm-monitor` to you, puts the real unit in **user-owned** `/etc/kgsm-monitor/systemd/` with
+`/etc/systemd/system/kgsm-monitor.service` symlinked to it, installs a polkit rule scoped to this
+project's units, enables the unit, then verifies the grant by making the same unprivileged
+`systemctl` calls the deploy will. It is idempotent — re-run it after changing what the host needs.
+
+`deploy/deploy.sh` is then **fully headless: no sudo, no prompts.** The prefix is yours so
+installing the AOT binary is a plain file write, a changed unit is a plain file write into the
+user-owned directory, and every `systemctl` verb goes through the polkit grant. It refuses
+**before building**, with *"run `deploy/setup.sh`"*, on an unprovisioned host. `deploy-common.sh`
+holds the paths/units/helpers both scripts share; the three files are self-contained, so a
+standalone clone deploys with no other repo checked out. Every `kgsm-*` repo carries this same
+pattern.
+
+If some *other* operation seems to need root, stop and ask — don't reintroduce `sudo` into
+`deploy.sh`. The one genuinely privileged thing here is unrelated to delivering code: the eBPF
+per-server network meter has its own one-time `deploy/net-meter-setup.sh`.
+
 ## Architecture
 
 **Two self-ticking `BackgroundService`s, conflation/serve-latest.** Both compute a frame on

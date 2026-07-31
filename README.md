@@ -83,9 +83,23 @@ KGSM connects via `socat` — wire the emitter by adding `monitoring.sock` to KG
 
 ## Deploy
 
-`sudo ./deploy/install.sh` publishes the AOT binary to `/opt/kgsm-monitor` and installs the
-hardened systemd unit (it does **not** start the daemon; pass `--enable` to
-`systemctl enable --now`). To let a non-root API read the socket, see the `Group=` recipe in
+```bash
+./deploy/setup.sh    # ONCE per host. Asks for sudo. Idempotent, re-runnable.
+./deploy/deploy.sh   # every deploy. NO sudo, NO prompts.
+```
+
+`setup.sh` provisions the host — `/opt/kgsm-monitor` chowned to you, the hardened unit installed
+into user-owned `/etc/kgsm-monitor/systemd/` with `/etc/systemd/system/kgsm-monitor.service`
+symlinked to it, a polkit rule scoped to this project's units, the unit enabled — then verifies the
+grant by making the same unprivileged `systemctl` calls the deploy will.
+
+`deploy.sh` publishes the AOT binary, refreshes the unit if it changed, restarts the daemon and
+confirms a real `GET /health` over the metrics socket — all **without sudo or a prompt**, because
+the prefix and the unit directory are yours and the `systemctl` verbs go through the polkit grant.
+On an unprovisioned host it stops before building and tells you to run `setup.sh`. Run both as the
+service user, never as root.
+
+To let a non-root API read the socket, see the `Group=` recipe in
 `src/Monitor/deploy/kgsm-monitor.service`.
 
 ## Status

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 #
-# DEPRECATED — kept as a thin shim for muscle memory. Use ./deploy/deploy.sh instead.
+# DEPRECATED — a thin shim for muscle memory. Use ./deploy/deploy.sh instead.
 #
-# The canonical path is now deploy/deploy.sh: it builds as the invoking (service-owning) user and
-# sudo's ONLY the systemd steps (the old install.sh published as root, which left root-owned
-# obj/bin in the source tree), rewrites the unit's User=/Group= to your user, and verifies a real
-# GET /health over the metrics socket. deploy.sh always enables + starts the unit, so the old
-# `--enable` flag is now the default and is ignored here.
+# The canonical path is deploy/setup.sh (once per host, asks for sudo) + deploy/deploy.sh (every
+# deploy, no sudo, no prompts). deploy.sh builds as the invoking service-owning user, rewrites the
+# unit's User=/Group= to that user, enables and starts the unit, and verifies a real GET /health
+# over the metrics socket. Any `--enable` argument is ignored: enabling is unconditional.
 #
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
