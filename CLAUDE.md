@@ -38,7 +38,8 @@ KGSM_MONITOR_SOCKET=/tmp/kgsm-monitor.sock ./artifacts/publish/kgsm-monitor &
 curl --unix-socket /tmp/kgsm-monitor.sock http://localhost/metrics | jq
 
 dotnet run -c Release --project bench/Monitor.Benchmarks -- --filter '*'   # perf (see bench/BASELINE.md)
-./deploy/deploy.sh                 # build + install AOT binary to /opt + systemd unit
+./deploy/setup.sh                  # ONCE per host — asks for sudo; provisions the headless deploy grant
+./deploy/deploy.sh                 # build + install AOT binary to /opt + systemd unit (no sudo, no prompts)
 ```
 
 Bash under `deploy/` and `src/Monitor/bpf/` follows the ecosystem `shellcheck`-clean convention.
