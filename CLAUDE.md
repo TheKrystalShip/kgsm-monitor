@@ -64,6 +64,13 @@ If some *other* operation seems to need root, stop and ask — don't reintroduce
 `deploy.sh`. The one genuinely privileged thing here is unrelated to delivering code: the eBPF
 per-server network meter has its own one-time `deploy/net-meter-setup.sh`.
 
+`deploy.sh` also installs **`deploy/kgsm-monitor.leaf.json`** — the leaf config descriptor — into
+`/var/lib/kgsm/leaves/monitor.json`, unprivileged, before the binary swap. It declares every
+`KGSM_MONITOR_*` knob so the Control Panel can render and edit them; the daemon never reads it.
+`LeafDescriptorTests` fails the build if the descriptor and the code disagree in either direction,
+so **adding a config knob means adding its descriptor entry**. Format and rules:
+`tks/leaf-config-descriptor.md`.
+
 ## Architecture
 
 **Two self-ticking `BackgroundService`s, conflation/serve-latest.** Both compute a frame on
@@ -106,6 +113,8 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
   `MonitorOptions.FromEnvironment()` (no config-binding source-gen); JSON goes through the
   source-generated `MonitorJsonContext`. A new serialized type must be registered there or it
   throws at runtime — the AOT publish (above) is how you catch it.
+- **A new env knob needs a descriptor entry**, or `LeafDescriptorTests` fails. The guard scans the
+  source for `KGSM_MONITOR_*`, so reading a variable through a raw literal does not evade it.
 - **`null` ≠ `0` is a hard wire contract** (the ecosystem never-fabricate rule, concretely).
   `null` means "not measured": io without `IOAccounting=yes`, `diskBytes` before the first walk,
   `rxBps`/`txBps` when un-metered or the cgroup is outside `kgsm.slice`. Never substitute 0.

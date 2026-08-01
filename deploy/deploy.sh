@@ -54,6 +54,10 @@ dotnet publish "$PROJECT_CSPROJ" -c Release -r "$RID" -o "$PUBLISH_DIR"
 # ── 2. Refresh the unit if it changed (we own the file; systemd reads it via the symlink) ──
 install_units_unprivileged
 
+# ── 2b. Publish the leaf config descriptor ────────────────────────────────────
+# Before the swap, so the surface kgsm-api reads never lags the binary that implements it.
+install_leaf_descriptor
+
 # ── 3. The swap ────────────────────────────────────────────────────────────────
 log "stopping ${SERVICE}"
 sysctl_do stop "$SERVICE" || true

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — leaf config descriptor
+- **`deploy/kgsm-monitor.leaf.json` declares the monitor's full configurable surface** — all 21
+  `KGSM_MONITOR_*` variables plus the standard `Logging__LogLevel__Default`, each with a label, a
+  description written for an operator, its type, its coded default, its bounds, and a `risk` tag.
+  `deploy/setup.sh` creates the shared discovery directory `/var/lib/kgsm/leaves/` (the one
+  privileged step); `deploy/deploy.sh` installs the descriptor there unprivileged before the binary
+  swap, so what kgsm-api reads can never lag the binary implementing it. The daemon does not read
+  its own descriptor and remains unaware of the API. Format: `tks/leaf-config-descriptor.md`.
+- Five fields are tagged `wiring` (the sockets, the KGSM path, the host id) and five `destructive`
+  (the retention cutoffs and the two database paths). `hostId` and `socketPath` name their
+  `pairedApiKey`, so a consumer moving either side moves both in one transaction rather than
+  severing the link.
+- **`LeafDescriptorTests` is the anti-drift guard.** It scans `src/Monitor` for `KGSM_MONITOR_*`
+  and fails the build when a variable the daemon reads has no descriptor entry, or when a
+  descriptor entry names a variable the daemon does not read — an override for one of those would
+  be reported as applied while changing nothing. Scanning the source rather than a constants table
+  is deliberate: a table only proves the table and the descriptor agree, and a knob read through a
+  raw literal would bypass both.
+
 ### Changed — headless deploys (`setup.sh` once, `deploy.sh` forever after)
 - **`deploy/setup.sh` provisions the host once** (asks for sudo; idempotent): chowns
   `/opt/kgsm-monitor` to the deploying user, puts the real unit in `/etc/kgsm-monitor/systemd/` with
