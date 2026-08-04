@@ -79,7 +79,7 @@
       "group": "general",
       "type": "string",
       "risk": "wiring",
-      "pairedApiKey": "KGSM_API_HOST_ID"
+      "pairedApiKey": "Api__HostId"
     },
     {
       "key": "intervalMs",
@@ -122,7 +122,7 @@
       "type": "path",
       "default": "/run/kgsm-monitor/metrics.sock",
       "risk": "wiring",
-      "pairedApiKey": "KGSM_API_MONITOR_SOCKET"
+      "pairedApiKey": "Api__MonitorSocketPath"
     },
     {
       "key": "socketMode",
