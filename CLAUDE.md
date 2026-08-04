@@ -71,17 +71,20 @@ per-server network meter has its own one-time `deploy/net-meter-setup.sh`.
 `/var/lib/kgsm/leaves/monitor.json`, unprivileged, before the binary swap. It declares every
 `Monitor__*` knob so the Control Panel can render and edit them; the daemon never reads it.
 
-**That file is generated, not written.** `tools/LeafDescriptorGen` reads the `[LeafField]`
-attributes and `<panel>` doc tags off `MonitorSettings` in the built assembly and rewrites it on
-every build of `Monitor.csproj` — so **edit the settings class, not the JSON**, and commit what the
-build produces. The generator also validates: a settings key no field describes, a described key the
-settings file does not declare, an undocumented field, a bad group or `dependsOn` reference all fail
-the build naming the key. Format and rules: `tks/leaf-config-descriptor.md`.
+**That file is generated, not written.** `TheKrystalShip.KGSM.LeafConfig` (the `kgsm-leafconfig`
+repo, consumed as a build-only `PackageReference`) reads the `[LeafField]` attributes and `<panel>`
+doc tags off `MonitorSettings` in the built assembly and rewrites it on every build — so **edit the
+settings class, not the JSON**, and commit what the build produces. It also validates: a settings key
+no field describes, a described key the settings file does not declare, an undocumented field, a bad
+group or `dependsOn` reference all fail the build naming the key. `Monitor.csproj` configures it with
+two properties, `LeafSettingsFile` and `LeafDescriptorFile`. Format and rules:
+`tks/leaf-config-descriptor.md`; the mechanism: `kgsm-leafconfig/README.md`.
 
-It reads the assembly through `MetadataLoadContext` in its own process — metadata only, nothing
-loaded for execution — so **describing the daemon costs it no reflection and no dependency**. The
-attributes are compiled in from `src/LeafConfig/` as source rather than referenced as a package;
-ILC drops them, and the AOT publish stays at zero warnings.
+**Describing the daemon costs it no reflection and no dependency.** The attributes are compiled in as
+source, the generator reads the assembly's metadata in its own process, and the package declares no
+dependencies — so nothing reaches the AOT publish. Verified here: zero ILC warnings, no
+`System.Reflection.MetadataLoadContext.dll` in `artifacts/publish/`, and none of the descriptor's
+strings in the native binary.
 
 ## Architecture
 

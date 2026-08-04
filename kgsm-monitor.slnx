@@ -9,7 +9,4 @@
   <Folder Name="/tests/">
     <Project Path="tests/Monitor.Tests/Monitor.Tests.csproj" />
   </Folder>
-  <Folder Name="/tools/">
-    <Project Path="tools/LeafDescriptorGen/LeafDescriptorGen.csproj" />
-  </Folder>
 </Solution>

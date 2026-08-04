@@ -20,21 +20,13 @@
          unsafe code in the project. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
-    <!-- The <panel> doc tags on MonitorSettings are where the Control Panel's field descriptions come
-         from; the compiler's XML output is how the descriptor generator reads them. CS1591 stays off:
-         the daemon's own internals are not a documented public API, and turning it on would demand a
-         doc comment on every type to get the twenty-odd that matter. -->
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <!-- The leaf config descriptor is generated from MonitorSettings by TheKrystalShip.KGSM.LeafConfig
+         (below). These name the two files it works between; everything else it needs — the attribute
+         source, the documentation file the <panel> tags travel in, the build step — comes with the
+         package. -->
+    <LeafSettingsFile>kgsm-monitor.settings.json</LeafSettingsFile>
+    <LeafDescriptorFile>$(MSBuildProjectDirectory)/../../deploy/kgsm-monitor.leaf.json</LeafDescriptorFile>
   </PropertyGroup>
-
-  <ItemGroup>
-    <!-- The leaf config descriptor attributes, compiled in as source rather than referenced as a
-         package. There is no assembly to load, trim or reason about at runtime — the leaf never reads
-         them; tools/LeafDescriptorGen reads them back out of this assembly's metadata. That is what
-         keeps a described leaf byte-for-byte as AOT-clean as an undescribed one. -->
-    <Compile Include="..\LeafConfig\*.cs" LinkBase="LeafConfig" />
-  </ItemGroup>
 
   <ItemGroup>
     <!-- Expose internal pure parse/rate helpers + Build() to test and benchmark projects. -->
@@ -71,6 +63,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Build-only: the descriptor attributes arrive as source and the generator as a tool, and the
+         package declares no dependencies of its own, so nothing here reaches the AOT publish. The
+         daemon never reads the attributes — the generator reads them back out of this assembly's
+         metadata, in its own process. PrivateAssets stops any of it flowing to Monitor.Tests. -->
+    <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="1.0.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Raw ADO SQLite for the metrics-history store (the monitor is the single source of truth for
          history). Microsoft.Data.Sqlite (NOT EF Core — EF is not AOT-safe) bundles the e_sqlite3 native
          lib via SQLitePCLRaw.bundle_e_sqlite3, which the AOT publish emits alongside the binary. -->
@@ -85,30 +85,6 @@
   <ItemGroup>
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
   </ItemGroup>
-
-  <!-- Regenerate the leaf config descriptor from this assembly's own metadata, every build. There is
-       no step to remember and no second place to edit: a knob added to MonitorSettings appears on the
-       Control Panel's configuration page as soon as the daemon compiles, and a knob declared in the
-       settings file that nothing describes fails the build naming the key.
-
-       It runs against the IL assembly, which exists under both `dotnet build` and the AOT publish, so
-       the descriptor is refreshed on the same command that produces the binary it describes. -->
-  <Target Name="GenerateLeafDescriptor" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
-    <PropertyGroup>
-      <_LeafDescriptorGen>$(MSBuildProjectDirectory)/../../tools/LeafDescriptorGen/LeafDescriptorGen.csproj</_LeafDescriptorGen>
-      <_LeafDescriptor>$(MSBuildProjectDirectory)/../../deploy/kgsm-monitor.leaf.json</_LeafDescriptor>
-    </PropertyGroup>
-
-    <!-- The tool is an ordinary portable build and must stay one. Without RemoveProperties, an AOT
-         publish passes its own RuntimeIdentifier/PublishAot down and the tool fails to restore for a
-         RID it never targets. -->
-    <MSBuild Projects="$(_LeafDescriptorGen)" Targets="Restore;Build" Properties="Configuration=Release"
-             RemoveProperties="RuntimeIdentifier;SelfContained;PublishAot;PublishTrimmed;PublishSingleFile;TargetFramework">
-      <Output TaskParameter="TargetOutputs" ItemName="_LeafDescriptorGenBinary" />
-    </MSBuild>
-
-    <Exec Command="dotnet &quot;@(_LeafDescriptorGenBinary)&quot; --assembly &quot;@(IntermediateAssembly->'%(FullPath)')&quot; --settings &quot;$(MSBuildProjectDirectory)/kgsm-monitor.settings.json&quot; --out &quot;$(_LeafDescriptor)&quot;" />
-  </Target>
 
   <Target Name="SetSourceRevisionId" BeforeTargets="GetAssemblyVersion;GenerateAssemblyInfo;CoreCompile"
           Condition="'$(SourceRevisionId)' == ''">

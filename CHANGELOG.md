@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added — the leaf config descriptor is generated from the settings type
-- **`deploy/kgsm-monitor.leaf.json` is written by `tools/LeafDescriptorGen` on every build**, from
+- **`deploy/kgsm-monitor.leaf.json` is written by `TheKrystalShip.KGSM.LeafConfig` on every build**, from
   `[LeafField]` attributes and `<panel>` doc tags on `MonitorSettings`. A knob now lives in two
   places — the property and the settings-file key — instead of three, and the descriptor cannot
   describe a variable the daemon does not read: the `env` name is derived from the property's
@@ -26,9 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MonitorOptions.FromSettings`, which raises anything lower, and the descriptor's `min`, which is
   what the Control Panel rejects against — so the panel can no longer accept a value the daemon
   would silently move.
-- The attributes are compiled in as source (`src/LeafConfig/`) and read back out of the assembly's
-  metadata by a separate process, so the daemon gains no reflection and no dependency. The AOT
-  publish stays at zero ILC warnings and the descriptor prose is absent from the native binary.
+- The mechanism is a **build-only package** shared across the ecosystem (`kgsm-leafconfig`): the
+  attributes arrive as source, the generator runs in its own process against this assembly's
+  metadata, and the package declares no dependencies. The daemon gains no reflection and nothing
+  reaches its publish output — the AOT pass stays at zero ILC warnings, there is no
+  `System.Reflection.MetadataLoadContext.dll` beside the binary, and the descriptor prose is absent
+  from the native binary.
 
 ### Fixed
 - **Six malformed XML doc comments**, surfaced by turning the documentation file on: an unclosed
