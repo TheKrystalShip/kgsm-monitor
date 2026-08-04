@@ -46,7 +46,6 @@ if (options.KgsmEnabled)
     builder.Services.AddKgsmServices(new KgsmOptions
     {
         KgsmPath = options.KgsmPath,
-        EventTransport = KgsmEventTransport.Journal,
         EventJournalDirectory = options.KgsmJournalDir,
         EventStartPosition = EventStartPosition.CursorOrOldest
     });

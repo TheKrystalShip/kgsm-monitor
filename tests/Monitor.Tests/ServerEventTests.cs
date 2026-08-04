@@ -123,7 +123,6 @@ public class ServerEventTests
         var kgsmOptions = new KgsmOptions
         {
             KgsmPath = "/bin/true",
-            EventTransport = KgsmEventTransport.Journal,
             EventJournalDirectory = journal,
             EventStartPosition = EventStartPosition.CursorOrOldest
         };

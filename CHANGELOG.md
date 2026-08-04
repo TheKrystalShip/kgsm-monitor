@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — kgsm-lib 2.0.0 (the socket event transport is gone)
+- **Pinned to `TheKrystalShip.KGSM.Lib` 2.0.0**, which removes `UnixSocketClient`,
+  `KgsmEventTransport` and `KgsmOptions.SocketPath`/`EventTransport`. This service already read the
+  journal, so the only change here is dropping the now-nonexistent `EventTransport = Journal` line —
+  there is no transport left to select. No behaviour change.
+
 ### Added — `events.db` is a declared index, rebuildable from the journal
 - **`POST /events/rebuild` reconstructs the event index from the engine's journal.** The record is
   the engine's append-only NDJSON; `events.db` is derived from it, exists so a query like "the last
