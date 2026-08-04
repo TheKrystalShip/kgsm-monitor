@@ -27,12 +27,15 @@ Environment=KGSM_MONITOR_SOCKET_MODE=660
 # NOT set — kgsm's instances/config live under /home and the daemon runs as that home's user.
 Environment=KGSM_MONITOR_KGSM_PATH=/usr/local/bin/kgsm
 
-# Event socket the monitor BINDS for low-latency watch-list deltas (Slice 2b). kgsm connects
-# to it (via socat) to push instance_* lifecycle events so a started/stopped server is
-# reflected sub-second instead of after KGSM_MONITOR_RESYNC_MS. The periodic resync stays the
-# source of truth, so this is purely a latency win. To use it, add this filename to kgsm's
-# config (enable_socket_events=true, event_socket_filenames=...,monitoring.sock).
-Environment=KGSM_MONITOR_KGSM_SOCKET=/run/kgsm-monitor/monitoring.sock
+# The engine's append-only event journal, which the monitor TAILS for instance_* lifecycle
+# events — so a started/stopped server is reflected sub-second instead of after
+# KGSM_MONITOR_RESYNC_MS, and a monitor that was down catches up from its stored position
+# rather than losing what it missed. The periodic resync remains the watch-list's source of
+# truth. Nothing to configure on the engine side and nothing reserved here: the engine is the
+# sole writer, and any number of consumers read the same files. Readable because the daemon
+# runs as the KGSM user that owns the journal (ProtectSystem=strict is deliberately unset —
+# see the hardening note below).
+Environment=KGSM_MONITOR_KGSM_JOURNAL=/var/lib/kgsm/events
 
 # Per-server disk footprint (diskBytes): recompute cadence for the working-dir size walk.
 # Default 60s; lower it for snappier footprint updates during testing.

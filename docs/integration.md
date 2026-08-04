@@ -53,10 +53,9 @@ The monitor listens on a **unix domain socket** speaking ordinary **HTTP/1.1**. 
   the socket's **owner or be in its group** (typically root runs the monitor; you add the
   API's user to a shared group — see the `Group=` recipe in
   `src/Monitor/deploy/kgsm-monitor.service`).
-- **Do not confuse it with the event socket.** `KGSM_MONITOR_KGSM_SOCKET`
-  (`/run/kgsm-monitor/monitoring.sock`) is **inbound, KGSM→monitor only** — it is where KGSM
-  *pushes* lifecycle events. Consumers never touch it. Always scrape
-  `KGSM_MONITOR_SOCKET`.
+- **This is the monitor's only socket.** Engine events reach the monitor from a file it reads
+  (`KGSM_MONITOR_KGSM_JOURNAL`, default `/var/lib/kgsm/events`), not a socket it binds — so
+  there is nothing else here to confuse it with. Always scrape `KGSM_MONITOR_SOCKET`.
 
 ### curl (smoke test)
 
@@ -409,7 +408,7 @@ no query params, headers, or control endpoints. If you need different behaviour,
 | `KGSM_MONITOR_IFACE_DENY` | `veth` | Which interfaces appear in `net.ifaces`. |
 | `KGSM_MONITOR_MOUNT_FS_DENY` | *(empty)* | Extra fs types hidden from `disk.mounts`. |
 | `KGSM_MONITOR_KGSM_PATH` | *(empty)* | **Unset ⇒ `servers` always `[]`** (host-only). Set ⇒ per-server on. |
-| `KGSM_MONITOR_KGSM_SOCKET` | `/run/kgsm-monitor/monitoring.sock` | KGSM→monitor event socket — **not yours**; don't connect to it. |
+| `KGSM_MONITOR_KGSM_JOURNAL` | `/var/lib/kgsm/events` | The engine event journal the monitor reads. Read-only and shared — you may tail it too. |
 | `KGSM_MONITOR_RESYNC_MS` | `15000` (floor 1000) | How fast a started/stopped server's presence catches up (worst case, absent events). |
 | `KGSM_MONITOR_DISK_USAGE_MS` | `60000` (floor 5000) | How often each server's `diskBytes` footprint is recomputed (a directory walk, §3.5) — your `diskBytes` refresh rate. |
 | `KGSM_MONITOR_EVENTS` | `on` | When on, lifecycle events make new servers appear sub-second instead of after `RESYNC_MS`. |
@@ -440,7 +439,7 @@ no query params, headers, or control endpoints. If you need different behaviour,
 
 1. Ensure the monitor is running and your user can read its socket (`0660` ⇒ shared group).
 2. Open an HTTP/1.1 client over the **unix socket** `KGSM_MONITOR_SOCKET`
-   (default `/run/kgsm-monitor/metrics.sock`). Not the `…-monitoring.sock` event socket.
+   (default `/run/kgsm-monitor/metrics.sock`) — the monitor's only socket.
 3. `GET /metrics`. On `503`, retry after ~`intervalMs`.
 4. Parse the JSON (§3), **ignoring unknown fields** and tolerating unknown `kind` values.
 5. Loop at ~`intervalMs`; use `ts` for freshness/dedupe; fan out from a single loop.

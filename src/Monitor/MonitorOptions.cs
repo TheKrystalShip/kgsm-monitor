@@ -48,11 +48,13 @@ public sealed class MonitorOptions
     public string KgsmPath { get; init; } = string.Empty;
 
     /// <summary>
-    /// Unix socket the monitor owns for KGSM event delivery (the low-latency watch-list
-    /// delta in Slice 2b). <c>KGSM_MONITOR_KGSM_SOCKET</c>. Distinct from <see cref="SocketPath"/>
-    /// (which the API scrapes); this one is where KGSM pushes <c>instance_*</c> events.
+    /// Directory holding KGSM's append-only event journal, which the monitor tails for engine
+    /// events. <c>KGSM_MONITOR_KGSM_JOURNAL</c>. Read-only to the monitor — the engine is the
+    /// only writer, and any number of consumers read the same files, so nothing here is owned
+    /// by or reserved for the monitor. Unrelated to <see cref="SocketPath"/>, which is the
+    /// monitor's own outbound metrics socket.
     /// </summary>
-    public string KgsmSocketPath { get; init; } = "/run/kgsm-monitor/monitoring.sock";
+    public string KgsmJournalDir { get; init; } = "/var/lib/kgsm/events";
 
     /// <summary>
     /// How often to re-list KGSM instances (the source-of-truth resync), in milliseconds.
@@ -63,11 +65,11 @@ public sealed class MonitorOptions
     public int ServerResyncMs { get; init; } = 15_000;
 
     /// <summary>
-    /// Whether to listen for KGSM lifecycle events on <see cref="KgsmSocketPath"/> for
-    /// low-latency watch-list deltas (Slice 2b). <c>KGSM_MONITOR_EVENTS</c> (default on).
-    /// When off, per-server metrics still work — the periodic <see cref="ServerResyncMs"/>
-    /// floor remains the source of truth; this only stops the monitor binding the event
-    /// socket (useful in restricted sandboxes). No effect unless KGSM is configured at all
+    /// Whether to read KGSM lifecycle events from <see cref="KgsmJournalDir"/> for low-latency
+    /// watch-list deltas. <c>KGSM_MONITOR_EVENTS</c> (default on). When off, per-server metrics
+    /// still work — the periodic <see cref="ServerResyncMs"/> floor remains the source of truth;
+    /// this only stops the monitor reading the journal (useful in restricted sandboxes), and
+    /// with it engine event history. No effect unless KGSM is configured at all
     /// (<see cref="KgsmEnabled"/>). Accepts <c>1/0</c>, <c>true/false</c>, <c>yes/no</c>,
     /// <c>on/off</c>.
     /// </summary>
@@ -196,7 +198,7 @@ public sealed class MonitorOptions
             MountFsDeny = ParseSet(Env("KGSM_MONITOR_MOUNT_FS_DENY")) ?? defaults.MountFsDeny,
             IfaceDenyPrefixes = ParseList(Env("KGSM_MONITOR_IFACE_DENY")) ?? defaults.IfaceDenyPrefixes,
             KgsmPath = Env("KGSM_MONITOR_KGSM_PATH") is { Length: > 0 } kp ? kp : defaults.KgsmPath,
-            KgsmSocketPath = Env("KGSM_MONITOR_KGSM_SOCKET") is { Length: > 0 } ks ? ks : defaults.KgsmSocketPath,
+            KgsmJournalDir = Env("KGSM_MONITOR_KGSM_JOURNAL") is { Length: > 0 } kj ? kj : defaults.KgsmJournalDir,
             ServerResyncMs = resync,
             DiskUsageMs = diskUsage,
             EventsEnabled = ParseBool(Env("KGSM_MONITOR_EVENTS"), defaults.EventsEnabled),

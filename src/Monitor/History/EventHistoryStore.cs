@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Events;
 
 namespace TheKrystalShip.KGSM.Monitor.History;
@@ -79,6 +80,20 @@ public sealed class EventHistoryStore : IDisposable
                     CREATE INDEX IF NOT EXISTS ix_event_ts            ON event(ts);
                     CREATE INDEX IF NOT EXISTS ix_event_instance_ts   ON event(instance, ts);
                     CREATE INDEX IF NOT EXISTS ix_event_blueprint_ts  ON event(blueprint, ts);
+
+                    CREATE TABLE IF NOT EXISTS meta (
+                      key   TEXT NOT NULL PRIMARY KEY,
+                      value TEXT NOT NULL
+                    );
+
+                    CREATE TABLE IF NOT EXISTS gap (
+                      ts             INTEGER NOT NULL PRIMARY KEY,
+                      reason         TEXT    NOT NULL,
+                      lost_segment   TEXT    NOT NULL,
+                      lost_offset    INTEGER NOT NULL,
+                      resumed_at     TEXT,
+                      resumed_offset INTEGER NOT NULL
+                    );
                     """;
                 await ddl.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
@@ -147,6 +162,152 @@ public sealed class EventHistoryStore : IDisposable
                 _logger.LogDebug("event history: duplicate id {Id} ignored ({EventType})", id, wrapper.EventType);
         }
         finally { _gate.Release(); }
+    }
+
+    // Cursor key in the meta table. The monitor keeps its journal position in the same database
+    // as the events it derives from them, so the index and the position it was built from can
+    // never end up in different places.
+    private const string CursorKey = "journal_cursor";
+
+    /// <summary>
+    /// Read the stored journal position, or <see langword="null"/> if the monitor has never
+    /// recorded one (a fresh database, or one written before the journal transport).
+    /// </summary>
+    public async Task<EventCursor?> LoadCursorAsync(CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            SqliteConnection conn = await EnsureAsync(ct).ConfigureAwait(false);
+            await using SqliteCommand cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT value FROM meta WHERE key = $key";
+            cmd.Parameters.AddWithValue("$key", CursorKey);
+
+            if (await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) is not string raw)
+                return null;
+
+            // "<segment>\t<offset>" — a tab cannot appear in a segment file name, so the split
+            // is unambiguous without pulling JSON into a two-field value.
+            int tab = raw.IndexOf('\t', StringComparison.Ordinal);
+            if (tab <= 0 || !long.TryParse(raw.AsSpan(tab + 1), CultureInfo.InvariantCulture, out long offset))
+            {
+                _logger.LogWarning("event history: stored journal cursor {Raw} is malformed; starting cold", raw);
+                return null;
+            }
+
+            return new EventCursor { Segment = raw[..tab], Offset = offset };
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// Record the journal position to resume from.
+    /// </summary>
+    /// <remarks>
+    /// Written after the events before it have been persisted, not with them, so delivery is
+    /// at-least-once: a crash between the two costs a re-read, never a lost event. That is safe
+    /// here precisely because <see cref="AppendAsync"/> is idempotent — the deterministic
+    /// <see cref="AuditId.ForEvent"/> primary key plus <c>INSERT OR IGNORE</c> turns a replayed
+    /// event into a no-op.
+    /// </remarks>
+    public async Task SaveCursorAsync(EventCursor cursor, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(cursor);
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            SqliteConnection conn = await EnsureAsync(ct).ConfigureAwait(false);
+            await using SqliteCommand cmd = conn.CreateCommand();
+            cmd.CommandText =
+                """
+                INSERT INTO meta (key, value) VALUES ($key, $value)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """;
+            cmd.Parameters.AddWithValue("$key", CursorKey);
+            cmd.Parameters.AddWithValue(
+                "$value",
+                string.Create(CultureInfo.InvariantCulture, $"{cursor.Segment}\t{cursor.Offset}"));
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// Record that the journal could not be resumed where the monitor left off, so events
+    /// happened in the interval that this history does not contain.
+    /// </summary>
+    /// <remarks>
+    /// This is the never-fabricate rule reaching the audit trail. A store that silently resumed
+    /// after a gap would return a partial history indistinguishable from a complete one; a
+    /// recorded gap lets <c>GET /events</c> state plainly that coverage before a point is
+    /// incomplete. The socket transport could not do this at all — a missed event looked exactly
+    /// like an event that never happened.
+    /// </remarks>
+    public async Task RecordGapAsync(EventJournalGap gap, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(gap);
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            SqliteConnection conn = await EnsureAsync(ct).ConfigureAwait(false);
+            await using SqliteCommand cmd = conn.CreateCommand();
+            cmd.CommandText =
+                """
+                INSERT OR REPLACE INTO gap (ts, reason, lost_segment, lost_offset, resumed_at, resumed_offset)
+                VALUES ($ts, $reason, $lostSegment, $lostOffset, $resumedAt, $resumedOffset)
+                """;
+            cmd.Parameters.AddWithValue("$ts", gap.DetectedAt.ToUnixTimeMilliseconds());
+            cmd.Parameters.AddWithValue("$reason", gap.Reason.ToString());
+            cmd.Parameters.AddWithValue("$lostSegment", gap.LostSegment);
+            cmd.Parameters.AddWithValue("$lostOffset", gap.LostOffset);
+            cmd.Parameters.AddWithValue("$resumedAt", (object?)gap.ResumedAtSegment ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$resumedOffset", gap.ResumedAtOffset);
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// The recorded gaps overlapping a query window, newest first — the honest caveat that goes
+    /// with a page of events.
+    /// </summary>
+    public async Task<IReadOnlyList<EventHistoryGap>> QueryGapsAsync(
+        long? sinceMs, long? untilMs, CancellationToken ct = default)
+    {
+        var gaps = new List<EventHistoryGap>();
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            SqliteConnection conn = await EnsureAsync(ct).ConfigureAwait(false);
+            await using SqliteCommand cmd = conn.CreateCommand();
+
+            var sql = new System.Text.StringBuilder(
+                "SELECT ts, reason, lost_segment, lost_offset, resumed_at FROM gap WHERE 1 = 1");
+            if (sinceMs is not null) sql.Append(" AND ts >= $since");
+            if (untilMs is not null) sql.Append(" AND ts <= $until");
+            sql.Append(" ORDER BY ts DESC");
+
+            cmd.CommandText = sql.ToString();
+            if (sinceMs is not null) cmd.Parameters.AddWithValue("$since", sinceMs.Value);
+            if (untilMs is not null) cmd.Parameters.AddWithValue("$until", untilMs.Value);
+
+            await using SqliteDataReader reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                gaps.Add(new EventHistoryGap(
+                    DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(0)),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetInt64(3),
+                    reader.IsDBNull(4) ? null : reader.GetString(4)));
+            }
+        }
+        finally { _gate.Release(); }
+
+        return gaps;
     }
 
     private static string? ExtractInstanceName(JsonElement data)
@@ -305,7 +466,12 @@ public sealed class EventHistoryStore : IDisposable
             nextId = last.Id;
         }
 
-        return new EventHistoryResponse(items.Count, nextTs, nextId, items);
+        // Gaps are scoped to the same window as the rows, so a page that covers an intact stretch
+        // reports none even when the store has recorded one elsewhere.
+        IReadOnlyList<EventHistoryGap> gaps =
+            await QueryGapsAsync(sinceMs, untilMs, ct).ConfigureAwait(false);
+
+        return new EventHistoryResponse(items.Count, nextTs, nextId, items, gaps);
     }
 
     public void Dispose()

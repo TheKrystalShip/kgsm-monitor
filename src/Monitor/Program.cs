@@ -1,3 +1,5 @@
+using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Extensions;
 using TheKrystalShip.KGSM.Monitor;
 using TheKrystalShip.KGSM.Monitor.Contracts;
@@ -37,7 +39,17 @@ builder.Services.AddSingleton(options);
 // Without it the monitor runs host-only and the servers array is simply empty.
 if (options.KgsmEnabled)
 {
-    builder.Services.AddKgsmServices(options.KgsmPath, options.KgsmSocketPath);
+    // Engine events come from the journal: a file any number of consumers read concurrently,
+    // with no socket to bind, no path to own, and nothing for the engine to be configured with.
+    // CursorOrOldest because this monitor IS the event index — it must be able to replay the
+    // surviving journal to rebuild, and the deterministic AuditId makes a replay idempotent.
+    builder.Services.AddKgsmServices(new KgsmOptions
+    {
+        KgsmPath = options.KgsmPath,
+        EventTransport = KgsmEventTransport.Journal,
+        EventJournalDirectory = options.KgsmJournalDir,
+        EventStartPosition = EventStartPosition.CursorOrOldest
+    });
     builder.Services.AddSingleton<ServerSampler>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerSampler>());
 }
@@ -66,6 +78,12 @@ if (options.HistoryEnabled)
 if (options.KgsmEnabled && options.EventHistoryEnabled)
 {
     builder.Services.AddSingleton<EventHistoryStore>();
+
+    // Replaces the library's default file-backed cursor store, registered above by
+    // AddKgsmServices — last registration wins. The monitor's position belongs in the same
+    // database as the events derived from it, not in a separate file that can disagree with it.
+    builder.Services.AddSingleton<IEventCursorStore, EventJournalCursorStore>();
+
     builder.Services.AddHostedService<EventPersistService>();
 }
 

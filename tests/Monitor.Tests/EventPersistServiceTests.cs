@@ -116,7 +116,9 @@ internal sealed class RecordingRawEventService : IEventService
         Task.WhenAll(RawHandlers.Select(h => h(wrapper)));
 
     public void Initialize() { }
-    public void RegisterHandler<T>(Func<T, Task> handler) where T : EventDataBase { }
+    public void Initialize(EventStartPosition startPosition) { }
+    public void RegisterHandler<T>(Func<T, Task> handler) where T : KgsmEventDataBase { }
+    public void RegisterGapHandler(Func<EventJournalGap, Task> handler) { }
     public void Dispose() { }
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

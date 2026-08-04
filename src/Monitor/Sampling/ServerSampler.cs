@@ -192,16 +192,17 @@ public sealed class ServerSampler(
             events.RegisterHandler<InstanceRemovedData>(OnLifecycleChange);
             events.RegisterHandler<InstanceUninstalledData>(OnLifecycleChange);
 
-            // Binds the socket on a fire-and-forget task inside the lib; a bind failure
-            // (perms/path) surfaces only as a background LogError there, NOT here — the
-            // try/catch covers the disposal-race paths Initialize() itself can throw. Either
-            // way per-server metrics keep working via the resync floor; a dead event socket
-            // is silent (documented in PLAN §12).
+            // Starts the journal reader on a fire-and-forget task inside the lib; a read
+            // failure (missing directory, permissions) surfaces only as a background LogError
+            // there, NOT here — the try/catch covers the disposal-race paths Initialize()
+            // itself can throw. Either way per-server metrics keep working via the resync
+            // floor. The start position comes from the options the host built (see Program.cs);
+            // this is the single Initialize call, so no other component may make one.
             events.Initialize();
 
             logger.LogInformation(
-                "server events: listening on {Socket} (resync floor {ResyncMs}ms)",
-                options.KgsmSocketPath, options.ServerResyncMs);
+                "server events: reading the journal at {Journal} (resync floor {ResyncMs}ms)",
+                options.KgsmJournalDir, options.ServerResyncMs);
         }
         catch (Exception ex)
         {

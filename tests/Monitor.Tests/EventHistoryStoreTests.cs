@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
+using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Events;
 using TheKrystalShip.KGSM.Monitor.History;
 
@@ -358,6 +359,153 @@ public class EventHistoryStoreTests
             EventHistoryItem item = Assert.Single(resp.Events);
             Assert.Equal("factorio-test", item.Instance);
             Assert.Null(item.Blueprint);
+        }
+        finally { Cleanup(store, db); }
+    }
+
+    // --- journal position ---------------------------------------------------------------
+
+    [Fact]
+    public async Task No_cursor_is_stored_until_one_is_saved()
+    {
+        var (store, db) = NewStore();
+        try
+        {
+            // A fresh database, or one written before the journal transport existed, has no
+            // position — which must read as "start cold", not as offset 0 of some segment.
+            Assert.Null(await store.LoadCursorAsync());
+        }
+        finally { Cleanup(store, db); }
+    }
+
+    [Fact]
+    public async Task Cursor_round_trips_and_the_latest_save_wins()
+    {
+        var (store, db) = NewStore();
+        try
+        {
+            await store.SaveCursorAsync(new EventCursor { Segment = "2026-08-04.ndjson", Offset = 1861 });
+
+            EventCursor? first = await store.LoadCursorAsync();
+            Assert.Equal("2026-08-04.ndjson", first!.Segment);
+            Assert.Equal(1861, first.Offset);
+
+            await store.SaveCursorAsync(new EventCursor { Segment = "2026-08-05.ndjson", Offset = 12 });
+
+            // One row, upserted: the store keeps a position, not a history of positions.
+            EventCursor? second = await store.LoadCursorAsync();
+            Assert.Equal("2026-08-05.ndjson", second!.Segment);
+            Assert.Equal(12, second.Offset);
+        }
+        finally { Cleanup(store, db); }
+    }
+
+    [Fact]
+    public async Task The_cursor_store_facade_reads_and_writes_the_same_row()
+    {
+        // The library talks to IEventCursorStore; proving the facade lands in the same database
+        // is what makes "the position lives beside the events" true rather than intended.
+        var (store, db) = NewStore();
+        try
+        {
+            var facade = new EventJournalCursorStore(store);
+            await facade.SaveAsync(new EventCursor { Segment = "2026-08-04.ndjson", Offset = 99 });
+
+            Assert.Equal(99, (await store.LoadCursorAsync())!.Offset);
+            Assert.Equal("2026-08-04.ndjson", (await facade.LoadAsync())!.Segment);
+        }
+        finally { Cleanup(store, db); }
+    }
+
+    // --- gaps ---------------------------------------------------------------------------
+
+    [Fact]
+    public async Task An_intact_history_reports_no_gaps()
+    {
+        var (store, db) = NewStore();
+        try
+        {
+            await store.AppendAsync(Wrapper());
+
+            EventHistoryResponse resp = await store.QueryEventsAsync(
+                instance: null, type: null, sinceMs: null, untilMs: null,
+                beforeTs: null, beforeId: null, limit: 200);
+
+            // An empty list is a positive claim of unbroken coverage, so it must never be
+            // absent or null — a reader distinguishes "no gaps" from "gaps unknown".
+            Assert.Empty(resp.Gaps);
+        }
+        finally { Cleanup(store, db); }
+    }
+
+    [Fact]
+    public async Task A_recorded_gap_is_reported_alongside_the_events()
+    {
+        var (store, db) = NewStore();
+        try
+        {
+            var detected = new DateTimeOffset(2026, 7, 18, 11, 0, 0, TimeSpan.Zero);
+            await store.RecordGapAsync(new EventJournalGap(
+                "2026-05-01.ndjson", 4096, EventJournalGapReason.SegmentPruned,
+                "2026-07-18.ndjson", 0, detected));
+            await store.AppendAsync(Wrapper());
+
+            EventHistoryResponse resp = await store.QueryEventsAsync(
+                instance: null, type: null, sinceMs: null, untilMs: null,
+                beforeTs: null, beforeId: null, limit: 200);
+
+            // Without this the page would look like a complete record of the window when it is
+            // not — the exact fabrication the journal transport exists to make impossible.
+            EventHistoryGap gap = Assert.Single(resp.Gaps);
+            Assert.Equal("2026-05-01.ndjson", gap.LostSegment);
+            Assert.Equal(4096, gap.LostOffset);
+            Assert.Equal("SegmentPruned", gap.Reason);
+            Assert.Equal("2026-07-18.ndjson", gap.ResumedAtSegment);
+            Assert.Equal(detected, gap.DetectedAt);
+        }
+        finally { Cleanup(store, db); }
+    }
+
+    [Fact]
+    public async Task Gaps_are_scoped_to_the_queried_window()
+    {
+        var (store, db) = NewStore();
+        try
+        {
+            var old = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            await store.RecordGapAsync(new EventJournalGap(
+                "2025-12-01.ndjson", 10, EventJournalGapReason.SegmentPruned,
+                "2026-01-01.ndjson", 0, old));
+            await store.AppendAsync(Wrapper());
+
+            // A query over an intact stretch must not inherit a caveat from an unrelated one.
+            EventHistoryResponse resp = await store.QueryEventsAsync(
+                instance: null, type: null,
+                sinceMs: new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero).ToUnixTimeMilliseconds(),
+                untilMs: null, beforeTs: null, beforeId: null, limit: 200);
+
+            Assert.Single(resp.Events);
+            Assert.Empty(resp.Gaps);
+        }
+        finally { Cleanup(store, db); }
+    }
+
+    [Fact]
+    public async Task A_replayed_event_does_not_duplicate_a_row()
+    {
+        // This is what makes at-least-once delivery safe: the journal reader saves its cursor
+        // only past events already handed over, so a crash re-delivers the tail on restart.
+        var (store, db) = NewStore();
+        try
+        {
+            await store.AppendAsync(Wrapper());
+            await store.AppendAsync(Wrapper());
+
+            EventHistoryResponse resp = await store.QueryEventsAsync(
+                instance: null, type: null, sinceMs: null, untilMs: null,
+                beforeTs: null, beforeId: null, limit: 200);
+
+            Assert.Single(resp.Events);
         }
         finally { Cleanup(store, db); }
     }

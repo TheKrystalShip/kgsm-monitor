@@ -13,14 +13,14 @@ using TheKrystalShip.KGSM.Services;
 namespace TheKrystalShip.KGSM.Monitor.Tests;
 
 /// <summary>
-/// Slice 2b: the event-driven watch-list delta. Two layers of coverage:
+/// The event-driven watch-list delta. Two layers of coverage:
 /// <list type="bullet">
-/// <item><b>Wiring (socket-free, deterministic):</b> a fake <see cref="IEventService"/>
+/// <item><b>Wiring (transport-free, deterministic):</b> a fake <see cref="IEventService"/>
 /// proves the sampler subscribes to exactly the four lifecycle events and starts the
 /// listener, and that firing one nudges an authoritative resync.</item>
-/// <item><b>Integration (real socket):</b> a real <see cref="UnixSocketClient"/> +
-/// <see cref="EventService"/> on a temp socket — a hand-written KGSM event envelope
-/// pushed over the wire must deserialize through <c>KgsmJsonContext</c> and trigger a
+/// <item><b>Integration (a real journal):</b> a real <see cref="EventJournalReader"/> +
+/// <see cref="EventService"/> over a temp journal directory — a line appended exactly as
+/// the engine writes it must deserialize through <c>KgsmJsonContext</c> and trigger a
 /// resync. This is the high-risk surface (real deserialization + dispatch) the fakes
 /// can't reach.</item>
 /// </list>
@@ -115,45 +115,51 @@ public class ServerEventTests
     }
 
     [Fact]
-    public async Task Real_event_envelope_over_the_socket_triggers_a_resync()
+    public async Task Real_event_envelope_in_the_journal_triggers_a_resync()
     {
-        string socket = Path.Combine(Path.GetTempPath(), $"kgsm-mon-{Guid.NewGuid():N}.sock");
-        var kgsmOptions = new KgsmOptions { KgsmPath = "/bin/true", SocketPath = socket };
-        var client = new UnixSocketClient(kgsmOptions, NullLogger<UnixSocketClient>.Instance);
-        await using var events = new EventService(client, NullLogger<EventService>.Instance);
+        string journal = Path.Combine(Path.GetTempPath(), $"kgsm-mon-journal-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(journal);
+
+        var kgsmOptions = new KgsmOptions
+        {
+            KgsmPath = "/bin/true",
+            EventTransport = KgsmEventTransport.Journal,
+            EventJournalDirectory = journal,
+            EventStartPosition = EventStartPosition.CursorOrOldest
+        };
+        var reader = new EventJournalReader(
+            kgsmOptions, new NullEventCursorStore(), NullLogger<EventJournalReader>.Instance);
+        await using var events = new EventService(reader, NullLogger<EventService>.Instance);
 
         var instances = new CountingInstanceService();
-        var sampler = NewSampler(instances, events, EventsEnabled: true, resyncMs: 60_000, socketPath: socket);
+        var sampler = NewSampler(instances, events, EventsEnabled: true, resyncMs: 60_000, journalDir: journal);
 
         await sampler.StartAsync(CancellationToken.None);
         try
         {
-            // Initialize() binds the socket on a fire-and-forget task, so the file appears
-            // asynchronously — poll for it before connecting.
-            Assert.True(
-                await WaitUntilAsync(() => File.Exists(socket), 5000),
-                "event socket never appeared");
             // Establish the prime baseline (max-without-event is 1; the 60s floor can't
-            // fire here), so any further increment is unambiguously the socket event.
+            // fire here), so any further increment is unambiguously the journal event.
             Assert.True(
                 await WaitUntilAsync(() => instances.GetAllCalls >= 1, 5000),
                 "prime resync never ran");
             int baseline = instances.GetAllCalls;
 
-            // The exact envelope KGSM emits (PascalCase, extra top-level fields ignored by
-            // EventWrapper). This must round-trip through the source-generated KgsmJsonContext.
-            await SendEventAsync(socket,
+            // The exact line KGSM appends (PascalCase, compact, one event per line, extra
+            // top-level fields ignored by EventWrapper). This must round-trip through the
+            // source-generated KgsmJsonContext.
+            await AppendEventAsync(journal,
                 """
                 {"EventType":"instance_started","Data":{"InstanceName":"7dtd"},"Timestamp":"2026-06-11T00:00:00Z","Hostname":"test","KGSMVersion":"1.2.3"}
                 """);
 
             Assert.True(
-                await WaitUntilAsync(() => instances.GetAllCalls > baseline, 5000),
-                $"socket event did not trigger a resync (GetAll calls = {instances.GetAllCalls}, baseline {baseline})");
+                await WaitUntilAsync(() => instances.GetAllCalls > baseline, 10_000),
+                $"journal event did not trigger a resync (GetAll calls = {instances.GetAllCalls}, baseline {baseline})");
         }
         finally
         {
             await sampler.StopAsync(CancellationToken.None);
+            Directory.Delete(journal, recursive: true);
         }
     }
 
@@ -164,37 +170,23 @@ public class ServerEventTests
         IEventService events,
         bool EventsEnabled,
         int resyncMs = 15_000,
-        string socketPath = "/tmp/kgsm-mon-unused.sock")
+        string journalDir = "/tmp/kgsm-mon-unused-journal")
     {
         var options = new MonitorOptions
         {
             KgsmPath = "/bin/true",
-            KgsmSocketPath = socketPath,
+            KgsmJournalDir = journalDir,
             ServerResyncMs = resyncMs,
             EventsEnabled = EventsEnabled,
         };
         return new ServerSampler(NullLogger<ServerSampler>.Instance, options, instances, events);
     }
 
-    private static async Task SendEventAsync(string socketPath, string json)
+    /// <summary>Appends one event the way the engine does: a single complete line, compact.</summary>
+    private static async Task AppendEventAsync(string journalDir, string json)
     {
-        byte[] payload = Encoding.UTF8.GetBytes(json);
-        for (int attempt = 0; ; attempt++)
-        {
-            using var s = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-            try
-            {
-                await s.ConnectAsync(new UnixDomainSocketEndPoint(socketPath));
-                await s.SendAsync(payload, SocketFlags.None);
-                s.Shutdown(SocketShutdown.Both);
-                return;
-            }
-            catch (SocketException) when (attempt < 20)
-            {
-                // bound-but-not-yet-listening race; retry briefly
-                await Task.Delay(25);
-            }
-        }
+        string segment = Path.Combine(journalDir, $"{DateTime.UtcNow:yyyy-MM-dd}.ndjson");
+        await File.AppendAllTextAsync(segment, json + "\n");
     }
 
     private static async Task<bool> WaitUntilAsync(Func<bool> condition, int timeoutMs)
@@ -227,7 +219,7 @@ internal sealed class CountingInstanceService : IInstanceService
     public Instance? GetInstanceInfo(string instanceName) => throw new NotImplementedException();
     public InstanceRuntimeStatus? GetInstanceStatus(string instanceName) => throw new NotImplementedException();
     public Dictionary<string, Reading<InstanceRuntimeStatus>> GetAllStatuses(bool fast = false) => throw new NotImplementedException();
-    public KgsmResult Install(string blueprintName, string? installDir = null, string? version = null, string? name = null, string? actor = null, string? origin = null, int? port = null) => throw new NotImplementedException();
+    public KgsmResult Install(string blueprintName, string? installDir = null, string? version = null, string? name = null, string? actor = null, string? origin = null, int? port = null, bool? start = null) => throw new NotImplementedException();
     public KgsmResult Uninstall(string instanceName, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public ICollection<string> GetLogs(string instanceName, int maxLines = 10) => throw new NotImplementedException();
     public Task<ICollection<string>> GetLogsAsync(string instanceName, int maxLines = 10, CancellationToken cancellationToken = default) => throw new NotImplementedException();
@@ -242,6 +234,8 @@ internal sealed class CountingInstanceService : IInstanceService
     public KgsmResult CheckUpdate(string instanceName) => throw new NotImplementedException();
     public KgsmResult Update(string instanceName, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public KgsmResult GetBackups(string instanceName) => throw new NotImplementedException();
+    public List<InstanceBackup> GetBackupsDetailed(string instanceName) => throw new NotImplementedException();
+    public InstanceNoteResult SetInstanceNote(string instanceName, string body, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public KgsmResult CreateBackup(string instanceName, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public KgsmResult RestoreBackup(string instanceName, string backupName, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public KgsmResult PruneBackups(string instanceName, int keepN, string? actor = null, string? origin = null) => throw new NotImplementedException();
@@ -256,17 +250,28 @@ internal sealed class CountingInstanceService : IInstanceService
 }
 
 /// <summary>An <see cref="IEventService"/> that records subscriptions and lets a test
-/// fire an event directly, without a socket.</summary>
+/// fire an event directly, with no transport behind it.</summary>
 internal sealed class RecordingEventService : IEventService
 {
-    private readonly Dictionary<Type, Func<EventDataBase, Task>> _handlers = new();
+    // Keyed on the interface's own constraint (KgsmEventDataBase), not the narrower
+    // EventDataBase the sampler happens to handle: a handler may be registered for any event
+    // payload, including one with no instance.
+    private readonly Dictionary<Type, Func<KgsmEventDataBase, Task>> _handlers = new();
 
     public bool Initialized { get; private set; }
     public HashSet<Type> Registered { get; } = new();
 
+    public EventStartPosition? StartPosition { get; private set; }
+
     public void Initialize() => Initialized = true;
 
-    public void RegisterHandler<T>(Func<T, Task> handler) where T : EventDataBase
+    public void Initialize(EventStartPosition startPosition)
+    {
+        StartPosition = startPosition;
+        Initialized = true;
+    }
+
+    public void RegisterHandler<T>(Func<T, Task> handler) where T : KgsmEventDataBase
     {
         Registered.Add(typeof(T));
         _handlers[typeof(T)] = data => handler((T)data);
@@ -276,9 +281,10 @@ internal sealed class RecordingEventService : IEventService
         _handlers.TryGetValue(data.GetType(), out var handler) ? handler(data) : Task.CompletedTask;
 
     // Not exercised by ServerEventTests (that's the raw-handler dispatch path covered by
-    // EventHistoryStore/EventPersistService tests via a real EventService+socket); a no-op
+    // EventHistoryStore/EventPersistService tests against the real EventService); a no-op
     // fake here just needs to satisfy the interface.
     public void RegisterRawHandler(Func<EventWrapper, Task> handler) { }
+    public void RegisterGapHandler(Func<EventJournalGap, Task> handler) { }
 
     public void Dispose() { }
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;

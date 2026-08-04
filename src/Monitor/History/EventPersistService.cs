@@ -1,4 +1,5 @@
 using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Events;
 
 namespace TheKrystalShip.KGSM.Monitor.History;
@@ -9,7 +10,12 @@ namespace TheKrystalShip.KGSM.Monitor.History;
 /// unknown <c>EventType</c>, independent of (and never suppressing) the monitor's typed per-server
 /// dispatch (<see cref="Sampling.ServerSampler"/>'s lifecycle handlers keep driving watch-list
 /// resync unmodified). No background loop of its own: the work happens entirely inside the callback
-/// the event socket's read loop invokes, so <see cref="ExecuteAsync"/> just logs startup and returns.
+/// the journal reader's loop invokes, so <see cref="ExecuteAsync"/> just logs startup and returns.
+/// <para>
+/// It also records journal gaps, so a history missing a stretch of events says so rather than
+/// reading as complete. Only this service can: it is the one component that knows the store the
+/// history lives in.
+/// </para>
 /// </summary>
 /// <remarks>
 /// <b>Registration-order assumption (load-bearing, documented rather than solved with new
@@ -37,6 +43,26 @@ public sealed class EventPersistService : BackgroundService
         _logger = logger;
 
         events.RegisterRawHandler(OnRawEventAsync);
+        events.RegisterGapHandler(OnGapAsync);
+    }
+
+    // A gap that fails to record is worse than one that fails to be read: the history would then
+    // claim coverage it does not have. Log it loudly so the caveat survives even when the row does
+    // not.
+    private async Task OnGapAsync(EventJournalGap gap)
+    {
+        _logger.LogWarning(
+            "event history: journal gap at {Segment}+{Offset} ({Reason}); events before {Resumed} are missing from this store",
+            gap.LostSegment, gap.LostOffset, gap.Reason, gap.ResumedAtSegment ?? "(nothing)");
+
+        try
+        {
+            await _store.RecordGapAsync(gap).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "event history: failed to record the journal gap at {Segment}", gap.LostSegment);
+        }
     }
 
     // Swallow + log: a persist failure (locked db, disk full, malformed envelope) must never take

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — engine events come from the journal, not a socket
+- **The monitor tails KGSM's append-only event journal** (`KGSM_MONITOR_KGSM_JOURNAL`, default
+  `/var/lib/kgsm/events`) instead of binding a socket for the engine to push to.
+  `KGSM_MONITOR_KGSM_SOCKET` is gone, and with it the monitor's claim on a socket path the engine
+  had to be configured with. The four lifecycle handlers driving watch-list resync are unchanged —
+  the transport swap happens entirely below `IEventService`.
+
+  Engine events stop being live-only. A monitor that was down now catches up from its stored
+  position rather than losing everything it slept through, which matters because this daemon is
+  the ecosystem's engine-event history: what it misses, nothing else records. Its position lives
+  in `events.db` beside the events derived from it (`EventJournalCursorStore`), so the index and
+  the position it was built from cannot end up in different places. Delivery is at-least-once, and
+  that is safe here precisely because `AppendAsync` is already idempotent on the deterministic
+  `AuditId` — a replayed event is an `INSERT OR IGNORE` no-op.
+
+  The monitor starts at `CursorOrOldest`: it is the index, so with no stored position it replays
+  the surviving journal rather than starting blind.
+
+### Added — gaps are recorded and reported
+- **`GET /events` carries a `gaps` array**, and `events.db` gains a `gap` table to back it. When
+  journal retention has deleted the segment the monitor's cursor named, events occurred that this
+  store will never contain — so it says so, instead of returning a partial history that reads
+  exactly like a complete one. An empty array is a positive claim of unbroken coverage. The socket
+  transport could not express this at all: a missed event was indistinguishable from an event that
+  never happened. The field is additive, so a consumer that ignores it is unaffected.
+
 ### Added — leaf config descriptor
 - **`deploy/kgsm-monitor.leaf.json` declares the monitor's full configurable surface** — all 21
   `KGSM_MONITOR_*` variables plus the standard `Logging__LogLevel__Default`, each with a label, a

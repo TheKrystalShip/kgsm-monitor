@@ -85,7 +85,7 @@ frames are never queued.
   otherwise `servers` is always `[]`). Runs **two deliberately separate cadences**:
   - **Resync (slow, off the metrics tick):** lists KGSM instances via embedded kgsm-lib — a
     *process spawn*, the exact cost the metrics path avoids. A single-writer drain loop is the
-    only writer of the `volatile` watch-list; KGSM lifecycle events on the event socket and the
+    only writer of the `volatile` watch-list; KGSM lifecycle events from the journal and the
     periodic floor both feed a coalescing `RequestResync()` (semaphore capped at 1), which is
     what keeps the swap lock-free. `diskBytes` (a directory walk) runs on its own slow loop too.
   - **Sample (fast, the host tick):** reads each watched server's counters from cheap kernel
@@ -126,10 +126,17 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
   from the local feed in `nuget.config` (`/home/heisen/local-nuget`) before publish. The pin
   matters: `1.5.0` modelled `Instance.ports` as a string, but kgsm now emits a structured array,
   so an old pin throws on the detailed instance-list JSON and leaves `servers` permanently `[]`.
-- **Two distinct sockets — don't conflate them.** `KGSM_MONITOR_SOCKET`
-  (`metrics.sock`, default `/run/kgsm-monitor/`) is outbound: consumers scrape it.
-  `KGSM_MONITOR_KGSM_SOCKET` (`monitoring.sock`) is inbound-only: KGSM pushes lifecycle events
-  to it (best-effort; the resync floor is the source of truth).
+- **The monitor owns exactly one socket.** `KGSM_MONITOR_SOCKET` (`metrics.sock`, default
+  `/run/kgsm-monitor/`) is outbound: consumers scrape it. Engine events arrive the other way,
+  from a **file** — `KGSM_MONITOR_KGSM_JOURNAL` (default `/var/lib/kgsm/events`), read-only,
+  with the engine as sole writer and no reservation of any kind. The journal is why a monitor
+  that was down catches up instead of losing what it missed; the resync floor remains the
+  watch-list's source of truth regardless.
+- **The journal cursor lives in `events.db`, not in a file beside it** (`EventJournalCursorStore`
+  overrides the library default). The position and the index built from it must not be able to
+  disagree. Delivery is at-least-once, which is safe only because `AppendAsync` is idempotent on
+  the deterministic `AuditId` — **do not weaken that**, or a replay after a crash starts
+  duplicating history.
 - **Config file is `kgsm-monitor.settings.json`, not `appsettings.json`**, loaded explicitly
   from `AppContext.BaseDirectory` in `Program.cs` (the slim builder under systemd has no working
   dir, so default discovery finds nothing). It's logging-only; the monitor's own knobs are env vars.

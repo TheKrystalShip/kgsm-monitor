@@ -94,17 +94,6 @@
       "risk": "wiring"
     },
     {
-      "key": "kgsmSocketPath",
-      "env": "KGSM_MONITOR_KGSM_SOCKET",
-      "label": "Engine event socket",
-      "description": "Unix socket the monitor binds for KGSM lifecycle events. Inbound only — the engine pushes to it, nothing scrapes it.",
-      "group": "sockets",
-      "type": "path",
-      "default": "/run/kgsm-monitor/monitoring.sock",
-      "risk": "wiring",
-      "dependsOn": "kgsmPath"
-    },
-    {
       "key": "kgsmPath",
       "env": "KGSM_MONITOR_KGSM_PATH",
       "label": "KGSM executable",
@@ -143,12 +132,23 @@
     {
       "key": "eventsEnabled",
       "env": "KGSM_MONITOR_EVENTS",
-      "label": "Listen for engine events",
-      "description": "Bind the engine event socket for sub-second watch-list updates. With this off, per-server metrics still work — the periodic resync remains the source of truth.",
+      "label": "Read engine events",
+      "description": "Tail the engine event journal for sub-second watch-list updates. With this off, per-server metrics still work — the periodic resync remains the source of truth — but engine event history stops being recorded.",
       "group": "servers",
       "type": "bool",
       "default": "true",
       "risk": "safe",
+      "dependsOn": "kgsmPath"
+    },
+    {
+      "key": "kgsmJournalDir",
+      "env": "KGSM_MONITOR_KGSM_JOURNAL",
+      "label": "Engine event journal",
+      "description": "Directory holding KGSM's append-only event journal, which the monitor tails for engine events. Read-only: the engine is the sole writer, and any number of consumers read the same files with no coordination.",
+      "group": "servers",
+      "type": "path",
+      "default": "/var/lib/kgsm/events",
+      "risk": "wiring",
       "dependsOn": "kgsmPath"
     },
     {
