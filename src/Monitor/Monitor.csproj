@@ -67,7 +67,7 @@
          package declares no dependencies of its own, so nothing here reaches the AOT publish. The
          daemon never reads the attributes — the generator reads them back out of this assembly's
          metadata, in its own process. PrivateAssets stops any of it flowing to Monitor.Tests. -->
-    <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="1.0.0" PrivateAssets="all" />
+    <PackageReference Include="TheKrystalShip.KGSM.LeafConfig" Version="2.2.0" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
