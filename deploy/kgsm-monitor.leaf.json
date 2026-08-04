@@ -8,6 +8,10 @@
   "applyMode": "restart",
   "floorSources": [
     {
+      "kind": "appsettings",
+      "path": "/opt/kgsm-monitor/kgsm-monitor.settings.json"
+    },
+    {
       "kind": "systemd-unit",
       "path": "/etc/kgsm-monitor/systemd/kgsm-monitor.service"
     },
