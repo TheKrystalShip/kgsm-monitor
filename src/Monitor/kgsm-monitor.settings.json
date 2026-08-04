@@ -1,4 +1,27 @@
 {
+  "Monitor": {
+    "IntervalMs": 1000,
+    "SocketPath": "/run/kgsm-monitor/metrics.sock",
+    "SocketMode": "660",
+    "MountFsDeny": "",
+    "IfaceDenyPrefixes": "veth",
+    "KgsmPath": "",
+    "KgsmJournalDir": "/var/lib/kgsm/events",
+    "ServerResyncMs": 15000,
+    "EventsEnabled": true,
+    "DiskUsageMs": 60000,
+    "HostId": "",
+    "HistoryDisabled": false,
+    "HistoryDbPath": "/var/lib/kgsm-monitor/metrics.db",
+    "PersistMs": 15000,
+    "RawRetentionHours": 24,
+    "RollupStepMin": 5,
+    "RollupRetentionDays": 30,
+    "MaintenanceMs": 60000,
+    "EventHistoryDisabled": false,
+    "EventsDbPath": "/var/lib/kgsm-monitor/events.db",
+    "EventRetentionDays": 30
+  },
   "Logging": {
     "LogLevel": {
       "Default": "Information",

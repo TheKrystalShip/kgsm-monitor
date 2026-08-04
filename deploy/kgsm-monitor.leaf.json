@@ -7,16 +7,46 @@
   "onDemand": false,
   "applyMode": "restart",
   "floorSources": [
-    { "kind": "systemd-unit", "path": "/etc/kgsm-monitor/systemd/kgsm-monitor.service" },
-    { "kind": "env-file", "path": "/etc/kgsm-monitor/kgsm-monitor.env" }
+    {
+      "kind": "systemd-unit",
+      "path": "/etc/kgsm-monitor/systemd/kgsm-monitor.service"
+    },
+    {
+      "kind": "env-file",
+      "path": "/etc/kgsm-monitor/kgsm-monitor.env"
+    }
   ],
   "groups": [
-    { "id": "general", "label": "General", "order": 1 },
-    { "id": "sampling", "label": "Sampling", "order": 2 },
-    { "id": "sockets", "label": "Sockets", "order": 3 },
-    { "id": "servers", "label": "Per-server metrics", "order": 4 },
-    { "id": "history", "label": "Metrics history", "order": 5 },
-    { "id": "events", "label": "Event history", "order": 6 }
+    {
+      "id": "general",
+      "label": "General",
+      "order": 1
+    },
+    {
+      "id": "sampling",
+      "label": "Sampling",
+      "order": 2
+    },
+    {
+      "id": "sockets",
+      "label": "Sockets",
+      "order": 3
+    },
+    {
+      "id": "servers",
+      "label": "Per-server metrics",
+      "order": 4
+    },
+    {
+      "id": "history",
+      "label": "Metrics history",
+      "order": 5
+    },
+    {
+      "id": "events",
+      "label": "Event history",
+      "order": 6
+    }
   ],
   "fields": [
     {
@@ -26,13 +56,20 @@
       "description": "Minimum severity this leaf logs.",
       "group": "general",
       "type": "enum",
-      "values": ["Trace", "Debug", "Information", "Warning", "Error", "Critical"],
+      "values": [
+        "Trace",
+        "Debug",
+        "Information",
+        "Warning",
+        "Error",
+        "Critical"
+      ],
       "default": "Information",
       "risk": "safe"
     },
     {
       "key": "hostId",
-      "env": "KGSM_MONITOR_HOST_ID",
+      "env": "Monitor__HostId",
       "label": "Host id",
       "description": "Identity this host stores its own metrics under. Defaults to the machine's hostname; it must match the API's host id or history queries return nothing.",
       "group": "general",
@@ -42,7 +79,7 @@
     },
     {
       "key": "intervalMs",
-      "env": "KGSM_MONITOR_INTERVAL_MS",
+      "env": "Monitor__IntervalMs",
       "label": "Sample interval",
       "description": "How often the monitor samples host and per-server metrics.",
       "group": "sampling",
@@ -54,7 +91,7 @@
     },
     {
       "key": "mountFsDeny",
-      "env": "KGSM_MONITOR_MOUNT_FS_DENY",
+      "env": "Monitor__MountFsDeny",
       "label": "Hidden filesystem types",
       "description": "Extra filesystem types to leave out of the mount list, on top of the pseudo filesystems that are always filtered.",
       "group": "sampling",
@@ -64,7 +101,7 @@
     },
     {
       "key": "ifaceDeny",
-      "env": "KGSM_MONITOR_IFACE_DENY",
+      "env": "Monitor__IfaceDenyPrefixes",
       "label": "Excluded interface prefixes",
       "description": "Interface-name prefixes left out of host network rates, on top of the always-excluded loopback. Virtual-ethernet pairs would otherwise double-count container traffic.",
       "group": "sampling",
@@ -74,7 +111,7 @@
     },
     {
       "key": "socketPath",
-      "env": "KGSM_MONITOR_SOCKET",
+      "env": "Monitor__SocketPath",
       "label": "Metrics socket",
       "description": "Unix socket the monitor serves metrics on. This is the socket the API scrapes.",
       "group": "sockets",
@@ -85,7 +122,7 @@
     },
     {
       "key": "socketMode",
-      "env": "KGSM_MONITOR_SOCKET_MODE",
+      "env": "Monitor__SocketMode",
       "label": "Metrics socket permissions",
       "description": "Octal permission bits applied to the metrics socket. The default lets a process in the socket's group scrape it without exposing it host-wide.",
       "group": "sockets",
@@ -95,7 +132,7 @@
     },
     {
       "key": "kgsmPath",
-      "env": "KGSM_MONITOR_KGSM_PATH",
+      "env": "Monitor__KgsmPath",
       "label": "KGSM executable",
       "description": "Path to the KGSM executable. Empty turns per-server sampling off entirely and the monitor reports host metrics only.",
       "group": "servers",
@@ -105,7 +142,7 @@
     },
     {
       "key": "resyncMs",
-      "env": "KGSM_MONITOR_RESYNC_MS",
+      "env": "Monitor__ServerResyncMs",
       "label": "Instance resync interval",
       "description": "How often the monitor re-lists KGSM instances to refresh its watch list. This spawns a process, so it runs well off the metrics tick.",
       "group": "servers",
@@ -118,7 +155,7 @@
     },
     {
       "key": "diskUsageMs",
-      "env": "KGSM_MONITOR_DISK_USAGE_MS",
+      "env": "Monitor__DiskUsageMs",
       "label": "Disk footprint interval",
       "description": "How often each server's on-disk size is recomputed. This walks the whole instance directory, so it runs on its own slow cadence.",
       "group": "servers",
@@ -131,7 +168,7 @@
     },
     {
       "key": "eventsEnabled",
-      "env": "KGSM_MONITOR_EVENTS",
+      "env": "Monitor__EventsEnabled",
       "label": "Read engine events",
       "description": "Tail the engine event journal for sub-second watch-list updates. With this off, per-server metrics still work — the periodic resync remains the source of truth — but engine event history stops being recorded.",
       "group": "servers",
@@ -142,7 +179,7 @@
     },
     {
       "key": "kgsmJournalDir",
-      "env": "KGSM_MONITOR_KGSM_JOURNAL",
+      "env": "Monitor__KgsmJournalDir",
       "label": "Engine event journal",
       "description": "Directory holding KGSM's append-only event journal, which the monitor tails for engine events. Read-only: the engine is the sole writer, and any number of consumers read the same files with no coordination.",
       "group": "servers",
@@ -153,7 +190,7 @@
     },
     {
       "key": "historyDisabled",
-      "env": "KGSM_MONITOR_HISTORY_DISABLED",
+      "env": "Monitor__HistoryDisabled",
       "label": "Disable metrics history",
       "description": "Turn off metrics persistence and the history endpoint. The monitor then serves live frames only, and the Control Panel's metric charts have no data to draw.",
       "group": "history",
@@ -163,7 +200,7 @@
     },
     {
       "key": "dbPath",
-      "env": "KGSM_MONITOR_DB_PATH",
+      "env": "Monitor__HistoryDbPath",
       "label": "Metrics database",
       "description": "SQLite file holding metrics history. Repointing it starts an empty store and orphans the existing history.",
       "group": "history",
@@ -173,7 +210,7 @@
     },
     {
       "key": "persistMs",
-      "env": "KGSM_MONITOR_PERSIST_MS",
+      "env": "Monitor__PersistMs",
       "label": "Persist interval",
       "description": "How often the latest sampled frame is written to history.",
       "group": "history",
@@ -185,7 +222,7 @@
     },
     {
       "key": "rawRetentionHours",
-      "env": "KGSM_MONITOR_RAW_RETENTION_HOURS",
+      "env": "Monitor__RawRetentionHours",
       "label": "Raw retention",
       "description": "How long full-resolution samples are kept. Also the tier boundary: a query inside this window reads raw samples, one beyond it reads rollups. Lowering it prunes existing rows.",
       "group": "history",
@@ -197,7 +234,7 @@
     },
     {
       "key": "rollupStepMin",
-      "env": "KGSM_MONITOR_ROLLUP_STEP_MIN",
+      "env": "Monitor__RollupStepMin",
       "label": "Rollup bucket width",
       "description": "Width of each aggregated history bucket beyond the raw window.",
       "group": "history",
@@ -209,7 +246,7 @@
     },
     {
       "key": "rollupRetentionDays",
-      "env": "KGSM_MONITOR_ROLLUP_RETENTION_DAYS",
+      "env": "Monitor__RollupRetentionDays",
       "label": "Rollup retention",
       "description": "How long aggregated history is kept. Lowering it prunes existing rows.",
       "group": "history",
@@ -221,7 +258,7 @@
     },
     {
       "key": "maintenanceMs",
-      "env": "KGSM_MONITOR_MAINT_MS",
+      "env": "Monitor__MaintenanceMs",
       "label": "Maintenance interval",
       "description": "How often rollup, pruning and vacuuming run over the history store.",
       "group": "history",
@@ -233,7 +270,7 @@
     },
     {
       "key": "eventHistoryDisabled",
-      "env": "KGSM_MONITOR_EVENT_HISTORY_DISABLED",
+      "env": "Monitor__EventHistoryDisabled",
       "label": "Disable event history",
       "description": "Turn off persistence of KGSM engine events. Independent of metrics history — either can be off without the other. The Control Panel's audit timeline loses its engine-event source.",
       "group": "events",
@@ -244,7 +281,7 @@
     },
     {
       "key": "eventsDbPath",
-      "env": "KGSM_MONITOR_EVENTS_DB_PATH",
+      "env": "Monitor__EventsDbPath",
       "label": "Event database",
       "description": "SQLite file holding engine-event history, kept separate from the metrics store so the two never contend for a writer. Repointing it starts empty and orphans the existing history.",
       "group": "events",
@@ -254,7 +291,7 @@
     },
     {
       "key": "eventRetentionDays",
-      "env": "KGSM_MONITOR_EVENT_RETENTION_DAYS",
+      "env": "Monitor__EventRetentionDays",
       "label": "Event retention",
       "description": "How long engine events are kept. There is no rollup tier — these are discrete facts, so rows simply age out. Lowering it prunes existing rows.",
       "group": "events",

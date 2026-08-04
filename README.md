@@ -24,29 +24,50 @@ dotnet run -c Release --project bench/Monitor.Benchmarks -- --filter '*'
 dotnet publish src/Monitor/Monitor.csproj -c Release -r linux-x64 -o artifacts/publish
 
 # Run against a dev socket (no root / /run needed)
-KGSM_MONITOR_SOCKET=/tmp/kgsm-monitor.sock \
+Monitor__SocketPath=/tmp/kgsm-monitor.sock \
   ./artifacts/publish/kgsm-monitor &
 
 curl --unix-socket /tmp/kgsm-monitor.sock http://localhost/metrics | jq
 ```
 
-## Configuration (environment variables)
+## Configuration
 
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `KGSM_MONITOR_SOCKET` | `/run/kgsm-monitor/metrics.sock` | Unix socket path to listen on |
-| `KGSM_MONITOR_SOCKET_MODE` | `660` | Octal perms applied to the socket (group read = API can scrape) |
-| `KGSM_MONITOR_INTERVAL_MS` | `1000` | Sampling cadence (floor 100 ms) |
-| `KGSM_MONITOR_IFACE_DENY` | `veth` | Comma-separated interface-name prefixes to exclude |
-| `KGSM_MONITOR_MOUNT_FS_DENY` | *(empty)* | Extra fs types to hide (pseudo-fs already filtered) |
-| `KGSM_MONITOR_KGSM_PATH` | *(empty)* | Path to `kgsm.sh`. **Unset ⇒ host-only**; set ⇒ per-server cgroup sampling on |
-| `KGSM_MONITOR_KGSM_JOURNAL` | `/var/lib/kgsm/events` | The engine's event journal the monitor tails for KGSM lifecycle events |
-| `KGSM_MONITOR_RESYNC_MS` | `15000` | How often to re-list KGSM instances (floor 1 s; off the metrics tick) |
-| `KGSM_MONITOR_EVENTS` | `on` | Listen for KGSM events on the socket above (`1/0`, `true/false`, `on/off`). Off ⇒ resync-only |
+`kgsm-monitor.settings.json`, installed beside the binary, is the source of truth: every knob is
+declared there with its default, under the `Monitor` section. An environment variable overrides one
+key of it, spelling the path with `__` — `Monitor__IntervalMs`, `Monitor__HistoryDbPath`. A variable
+naming a key the file does not declare binds to nothing and changes nothing, which is what keeps a
+stale override from looking applied.
+
+| Key | Variable | Default | Meaning |
+|-----|----------|---------|---------|
+| `SocketPath` | `Monitor__SocketPath` | `/run/kgsm-monitor/metrics.sock` | Unix socket path to listen on |
+| `SocketMode` | `Monitor__SocketMode` | `660` | Octal perms applied to the socket (group read = API can scrape) |
+| `IntervalMs` | `Monitor__IntervalMs` | `1000` | Sampling cadence (floor 100 ms) |
+| `IfaceDenyPrefixes` | `Monitor__IfaceDenyPrefixes` | `veth` | Comma-separated interface-name prefixes to exclude |
+| `MountFsDeny` | `Monitor__MountFsDeny` | *(empty)* | Extra fs types to hide (pseudo-fs already filtered) |
+| `KgsmPath` | `Monitor__KgsmPath` | *(empty)* | Path to `kgsm.sh`. **Unset ⇒ host-only**; set ⇒ per-server cgroup sampling on |
+| `KgsmJournalDir` | `Monitor__KgsmJournalDir` | `/var/lib/kgsm/events` | The engine's event journal the monitor tails for KGSM lifecycle events |
+| `ServerResyncMs` | `Monitor__ServerResyncMs` | `15000` | How often to re-list KGSM instances (floor 1 s; off the metrics tick) |
+| `EventsEnabled` | `Monitor__EventsEnabled` | `true` | Tail the engine journal for lifecycle events. Off ⇒ resync-only |
+| `DiskUsageMs` | `Monitor__DiskUsageMs` | `60000` | Per-server disk-footprint walk cadence (floor 5 s) |
+| `HostId` | `Monitor__HostId` | *(machine name)* | Identity host-kind metrics are stored under |
+| `HistoryDisabled` | `Monitor__HistoryDisabled` | `false` | Turns off metrics history and `/metrics/history` |
+| `HistoryDbPath` | `Monitor__HistoryDbPath` | `/var/lib/kgsm-monitor/metrics.db` | Metrics history store |
+| `PersistMs` | `Monitor__PersistMs` | `15000` | History flush cadence (floor 1 s) |
+| `RawRetentionHours` | `Monitor__RawRetentionHours` | `24` | Raw-tier retention, also the raw↔rollup query boundary |
+| `RollupStepMin` | `Monitor__RollupStepMin` | `5` | Rollup bucket width |
+| `RollupRetentionDays` | `Monitor__RollupRetentionDays` | `30` | Rollup-tier retention |
+| `MaintenanceMs` | `Monitor__MaintenanceMs` | `60000` | Rollup/prune/vacuum cadence (floor 1 s) |
+| `EventHistoryDisabled` | `Monitor__EventHistoryDisabled` | `false` | Turns off the engine-event index |
+| `EventsDbPath` | `Monitor__EventsDbPath` | `/var/lib/kgsm-monitor/events.db` | Event index store |
+| `EventRetentionDays` | `Monitor__EventRetentionDays` | `30` | Event-index retention |
+
+A cadence below its floor is raised to the floor rather than reverting to the default, so a value
+that is too small runs at the nearest legal one instead of silently at something nobody named.
 
 ### Per-server metrics (Slice 2)
 
-When `KGSM_MONITOR_KGSM_PATH` is set, each frame gains a `servers[]` array — one entry per
+When `Monitor__KgsmPath` is set, each frame gains a `servers[]` array — one entry per
 **running, cgroup-addressable** KGSM instance (systemd units and Docker containers):
 
 ```jsonc
@@ -72,14 +93,14 @@ native servers read io straight from `/proc` as root, so they need no such flag.
 > helpers reads slightly low; summed RSS double-counts pages shared across the tree
 > (overcount vs a cgroup's `memory.current`). Measured-and-labeled, never fabricated.
 
-The watch-list refreshes on a slow timer (`KGSM_MONITOR_RESYNC_MS`, off the metrics tick
-since it spawns `kgsm.sh`). **Slice 2b** adds the low-latency half: KGSM pushes lifecycle
-events (`instance_started/stopped/removed/uninstalled`) to the monitor-owned event socket,
-and each one *nudges* an immediate resync — so a freshly-started server shows up in
-sub-second rather than after up to `RESYNC_MS`. Events are best-effort (the periodic resync
-stays the source of truth); set `KGSM_MONITOR_EVENTS=0` to bind nothing and run resync-only.
-KGSM connects via `socat` — wire the emitter by adding `monitoring.sock` to KGSM's
-`event_socket_filenames` (see `src/Monitor/deploy/kgsm-monitor.service` for the recipe).
+The watch-list refreshes on a slow timer (`Monitor__ServerResyncMs`, off the metrics tick
+since it spawns `kgsm.sh`). The low-latency half comes from the engine's append-only event
+journal, which the monitor tails: each `instance_started/stopped/removed/uninstalled` line
+*nudges* an immediate resync, so a freshly-started server shows up sub-second rather than after
+up to a full resync interval. Nothing is configured on the engine side and nothing is reserved
+here — the engine appends and holds no list of readers, so any number of consumers tail the same
+files. The periodic resync stays the watch-list's source of truth; set
+`Monitor__EventsEnabled=false` to stop reading the journal and run resync-only.
 
 ## Deploy
 

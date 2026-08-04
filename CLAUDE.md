@@ -37,7 +37,7 @@ dotnet test --filter "FullyQualifiedName~CpuSourceTests"   # one class/test
 dotnet publish src/Monitor/Monitor.csproj -c Release -r linux-x64 -o artifacts/publish
 
 # Run against a dev socket (no root / /run needed)
-KGSM_MONITOR_SOCKET=/tmp/kgsm-monitor.sock ./artifacts/publish/kgsm-monitor &
+Monitor__SocketPath=/tmp/kgsm-monitor.sock ./artifacts/publish/kgsm-monitor &
 curl --unix-socket /tmp/kgsm-monitor.sock http://localhost/metrics | jq
 
 dotnet run -c Release --project bench/Monitor.Benchmarks -- --filter '*'   # perf (see bench/BASELINE.md)
@@ -69,10 +69,10 @@ per-server network meter has its own one-time `deploy/net-meter-setup.sh`.
 
 `deploy.sh` also installs **`deploy/kgsm-monitor.leaf.json`** — the leaf config descriptor — into
 `/var/lib/kgsm/leaves/monitor.json`, unprivileged, before the binary swap. It declares every
-`KGSM_MONITOR_*` knob so the Control Panel can render and edit them; the daemon never reads it.
-`LeafDescriptorTests` fails the build if the descriptor and the code disagree in either direction,
-so **adding a config knob means adding its descriptor entry**. Format and rules:
-`tks/leaf-config-descriptor.md`.
+`Monitor__*` knob so the Control Panel can render and edit them; the daemon never reads it.
+`LeafDescriptorTests` fails the build if the descriptor, the settings file and `MonitorSettings`
+disagree in any direction, so **adding a config knob means adding it in all three places**. Format
+and rules: `tks/leaf-config-descriptor.md`.
 
 ## Architecture
 
@@ -84,7 +84,7 @@ frames are never queued.
 - `MetricsSampler` (host, 1 Hz) — the always-on path. `Build()` assembles one `Snapshot` from
   the sampling sources. Stateful delta sources (`CpuSource`, `NetworkSource`, `DiskSource`) are
   primed once at start so the first published frame already carries rates.
-- `ServerSampler` (per-server, **opt-in**: only wired when `KGSM_MONITOR_KGSM_PATH` is set;
+- `ServerSampler` (per-server, **opt-in**: only wired when `Monitor__KgsmPath` is set;
   otherwise `servers` is always `[]`). Runs **two deliberately separate cadences**:
   - **Resync (slow, off the metrics tick):** lists KGSM instances via embedded kgsm-lib — a
     *process spawn*, the exact cost the metrics path avoids. A single-writer drain loop is the
@@ -112,12 +112,14 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
 
 ## Monitor-specific gotchas
 
-- **AOT cleanliness is non-negotiable.** Reflection-free by design. Config is read manually in
-  `MonitorOptions.FromEnvironment()` (no config-binding source-gen); JSON goes through the
-  source-generated `MonitorJsonContext`. A new serialized type must be registered there or it
-  throws at runtime — the AOT publish (above) is how you catch it.
-- **A new env knob needs a descriptor entry**, or `LeafDescriptorTests` fails. The guard scans the
-  source for `KGSM_MONITOR_*`, so reading a variable through a raw literal does not evade it.
+- **AOT cleanliness is non-negotiable.** Reflection-free by design. Configuration binds through
+  the config-binding source generator (on by default under `PublishAot`, so `Get<T>()` costs no
+  reflection); JSON goes through the source-generated `MonitorJsonContext`. A new serialized type
+  must be registered there or it throws at runtime — the AOT publish (above) is how you catch it.
+- **A knob lives in three places and `LeafDescriptorTests` pins all of them**: a `MonitorSettings`
+  property, a key in `kgsm-monitor.settings.json`, and a descriptor entry. Miss any one and the
+  build fails naming which — a property with no key has an invisible default, a key with no
+  property binds to nothing, and either without a descriptor entry is invisible to the panel.
 - **`null` ≠ `0` is a hard wire contract** (the ecosystem never-fabricate rule, concretely).
   `null` means "not measured": io without `IOAccounting=yes`, `diskBytes` before the first walk,
   `rxBps`/`txBps` when un-metered or the cgroup is outside `kgsm.slice`. Never substitute 0.
@@ -129,9 +131,9 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
   from the local feed in `nuget.config` (`/home/heisen/local-nuget`) before publish. The pin
   matters: `1.5.0` modelled `Instance.ports` as a string, but kgsm now emits a structured array,
   so an old pin throws on the detailed instance-list JSON and leaves `servers` permanently `[]`.
-- **The monitor owns exactly one socket.** `KGSM_MONITOR_SOCKET` (`metrics.sock`, default
+- **The monitor owns exactly one socket.** `Monitor__SocketPath` (`metrics.sock`, default
   `/run/kgsm-monitor/`) is outbound: consumers scrape it. Engine events arrive the other way,
-  from a **file** — `KGSM_MONITOR_KGSM_JOURNAL` (default `/var/lib/kgsm/events`), read-only,
+  from a **file** — `Monitor__KgsmJournalDir` (default `/var/lib/kgsm/events`), read-only,
   with the engine as sole writer and no reservation of any kind. The journal is why a monitor
   that was down catches up instead of losing what it missed; the resync floor remains the
   watch-list's source of truth regardless.
@@ -143,7 +145,7 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
   a clear-then-replay would destroy rows whose segments are already gone, and clearing a gap would
   turn an honest "incomplete before here" into a fabricated claim of coverage.
 - **Journal retention must stay ≥ index retention** (`event_journal_retention_days` in kgsm's
-  config vs `KGSM_MONITOR_EVENT_RETENTION_DAYS`, 90d vs 30d as shipped). The wrong way round, the
+  config vs `Monitor__EventRetentionDays`, 90d vs 30d as shipped). The wrong way round, the
   index keeps serving rows whose segments have been pruned — correct right up until something
   rebuilds, at which point history silently shortens. `EventPersistService` reads both at startup
   and logs an error naming the two numbers; it deliberately **reports and does not correct**, since
@@ -153,9 +155,17 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
   disagree. Delivery is at-least-once, which is safe only because `AppendAsync` is idempotent on
   the deterministic `AuditId` — **do not weaken that**, or a replay after a crash starts
   duplicating history, and the rebuild command stops being safe to run on a live daemon.
-- **Config file is `kgsm-monitor.settings.json`, not `appsettings.json`**, loaded explicitly
-  from `AppContext.BaseDirectory` in `Program.cs` (the slim builder under systemd has no working
-  dir, so default discovery finds nothing). It's logging-only; the monitor's own knobs are env vars.
+- **`kgsm-monitor.settings.json` is the source of truth for every knob**, not `appsettings.json`
+  (the ecosystem names these `kgsm-<leaf>.settings.json`). It is loaded explicitly from
+  `AppContext.BaseDirectory` in `Program.cs`, because the slim builder under systemd has no working
+  directory and default discovery finds nothing. An environment variable overrides one key of it
+  by spelling the path with `__` (`Monitor__IntervalMs`); a variable naming a key the file does not
+  declare binds to nothing.
+- **`AddEnvironmentVariables()` is re-registered after the settings file, and the order is
+  load-bearing.** Configuration resolves by source order and the file is appended after everything
+  the builder installed — including its own environment provider. Drop that line and the file
+  outranks every `Monitor__*` and `Logging__*` variable, so an override reads as applied while
+  changing nothing.
 
 ## Version tracking
 

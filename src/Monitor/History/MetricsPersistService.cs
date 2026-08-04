@@ -5,7 +5,7 @@ namespace TheKrystalShip.KGSM.Monitor.History;
 
 /// <summary>
 /// Persists the latest snapshot to the history store on a slow cadence
-/// (<c>KGSM_MONITOR_PERSIST_MS</c>, default 15s — decoupled from the 1&#160;Hz sample tick, matching
+/// (<c>Monitor__PersistMs</c>, default 15s — decoupled from the 1&#160;Hz sample tick, matching
 /// the row density the metrics history was designed around). Reads <see cref="MetricsSampler.Latest"/>
 /// (never a second scrape) and writes one batched transaction per tick.
 /// <para><b>Honest gaps:</b> no frame yet (monitor warming) or a null metric field (io/net/disk not

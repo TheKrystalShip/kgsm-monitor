@@ -18,30 +18,32 @@ ExecStart=/opt/kgsm-monitor/kgsm-monitor
 
 # The scrape socket the API reads. Lives inside the RuntimeDirectory (below), created by
 # systemd owned by this user, so a co-located API running as the same user can read it.
-Environment=KGSM_MONITOR_SOCKET=/run/kgsm-monitor/metrics.sock
-Environment=KGSM_MONITOR_SOCKET_MODE=660
+Environment=Monitor__SocketPath=/run/kgsm-monitor/metrics.sock
+Environment=Monitor__SocketMode=660
 
 # Per-server sampling ON: point at /usr/local/bin/kgsm — the canonical kgsm symlink every
 # consumer shares (kgsm-watchdog points at the same path). Repoint that symlink to move the
 # whole host at once, no unit edits. Unset this to run host-only. ProtectHome is deliberately
 # NOT set — kgsm's instances/config live under /home and the daemon runs as that home's user.
-Environment=KGSM_MONITOR_KGSM_PATH=/usr/local/bin/kgsm
+Environment=Monitor__KgsmPath=/usr/local/bin/kgsm
 
 # The engine's append-only event journal, which the monitor TAILS for instance_* lifecycle
 # events — so a started/stopped server is reflected sub-second instead of after
-# KGSM_MONITOR_RESYNC_MS, and a monitor that was down catches up from its stored position
+# Monitor__ServerResyncMs, and a monitor that was down catches up from its stored position
 # rather than losing what it missed. The periodic resync remains the watch-list's source of
 # truth. Nothing to configure on the engine side and nothing reserved here: the engine is the
 # sole writer, and any number of consumers read the same files. Readable because the daemon
 # runs as the KGSM user that owns the journal (ProtectSystem=strict is deliberately unset —
 # see the hardening note below).
-Environment=KGSM_MONITOR_KGSM_JOURNAL=/var/lib/kgsm/events
+Environment=Monitor__KgsmJournalDir=/var/lib/kgsm/events
 
 # Per-server disk footprint (diskBytes): recompute cadence for the working-dir size walk.
 # Default 60s; lower it for snappier footprint updates during testing.
-# Environment=KGSM_MONITOR_DISK_USAGE_MS=60000
+# Environment=Monitor__DiskUsageMs=60000
 
-# Host-specific overrides (signing keys, alternate paths, etc.) — optional, wins over the above.
+# Host-specific overrides — optional, wins over the above and over the settings file.
+# Every key here must exist in kgsm-monitor.settings.json, which declares the daemon's whole
+# configurable surface; a variable naming an undeclared key binds to nothing and sets nothing.
 EnvironmentFile=-/etc/kgsm-monitor/kgsm-monitor.env
 
 # systemd creates /run/kgsm-monitor owned by this user (mode 0750); the 0660 socket lives in it.
@@ -49,7 +51,7 @@ RuntimeDirectory=kgsm-monitor
 RuntimeDirectoryMode=0750
 
 # systemd creates /var/lib/kgsm-monitor owned by this user (persistent across reboots) for the
-# metrics-history SQLite store (KGSM_MONITOR_DB_PATH defaults inside it). The runtime dir above is
+# metrics-history SQLite store (Monitor__HistoryDbPath defaults inside it). The runtime dir above is
 # tmpfs — unsuitable for a DB that must survive a restart.
 StateDirectory=kgsm-monitor
 StateDirectoryMode=0750

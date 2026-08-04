@@ -144,7 +144,7 @@ public sealed class EventPersistService : BackgroundService
             _logger.LogError(
                 "event history: journal retention ({JournalDays}d) is shorter than index retention ({IndexDays}d) — "
                 + "a rebuild would return only {JournalDays}d of history. Raise {Key} in kgsm's config, or lower "
-                + "KGSM_MONITOR_EVENT_RETENTION_DAYS to match",
+                + "Monitor__EventRetentionDays to match",
                 journalDays, _options.EventRetentionDays, journalDays, JournalRetentionKey);
         }
         else

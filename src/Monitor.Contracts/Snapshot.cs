@@ -120,8 +120,8 @@ public sealed record SensorReading(string Chip, string? Label, double ValueC);
 /// On-disk footprint: the apparent total size (sum of file lengths) of the instance's
 /// working directory — install + saves + backups + logs + temp. Unlike the cgroup
 /// counters above this is a <em>filesystem</em> figure cgroups don't expose, so it is
-/// sampled on a slow, separate cadence (a directory walk, not the 1&#160;Hz tick — see
-/// <c>KGSM_MONITOR_DISK_USAGE_MS</c>) and conflated like the rest of the frame.
+/// sampled on a slow, separate cadence configured by the daemon (a directory walk, not the
+/// 1&#160;Hz tick) and conflated like the rest of the frame.
 /// Symlinks are not followed (no double-count). <c>null</c> when not yet walked or the
 /// directory can't be read — never a fabricated 0. Only attached to running servers
 /// (the frame lists running servers only), so a stopped server's footprint is absent.

@@ -8,23 +8,24 @@ namespace TheKrystalShip.KGSM.Monitor.Tests;
 /// added to the monitor without a descriptor entry fails the build here, and a descriptor entry
 /// naming a variable the monitor does not read fails here too.
 ///
-/// The coverage check scans the <em>source</em> rather than a table of constants. A table only
-/// proves the table and the descriptor agree; a knob read through a raw string literal would
-/// bypass both. The contract is documented in tks/leaf-config-descriptor.md.
+/// The coverage check reads <c>kgsm-monitor.settings.json</c> — the same artifact the daemon
+/// loads — rather than a table of constants, and cross-checks it against the properties the binder
+/// actually fills. Four directions are pinned, because a knob is only real when all of them hold:
+/// declared in the file, bound to a property, described in the descriptor, and nothing described
+/// that is not declared. The contract is documented in tks/leaf-config-descriptor.md.
 /// </summary>
 public class LeafDescriptorTests
 {
-    private const string EnvPrefix = "KGSM_MONITOR_";
-
     /// <summary>
-    /// Variables the monitor genuinely reads that do NOT appear as literals in its source: the
-    /// ecosystem logging convention resolves these through Microsoft.Extensions.Logging. Named
-    /// explicitly rather than allowed by a pattern, so the exception cannot quietly widen.
+    /// Keys owned by Microsoft.Extensions.Logging rather than by the monitor. The panel offers
+    /// exactly one of them — <c>Logging__LogLevel__Default</c>, the overall level — while the rest
+    /// of the namespace is per-category filtering (<c>Logging__LogLevel__Microsoft.AspNetCore</c>
+    /// and anything else a category name can spell). That set is open-ended by construction, so it
+    /// is exempted as a namespace: enumerating it in the descriptor is not possible, and the
+    /// coverage check would otherwise fail on a filter the daemon legitimately honours.
     /// </summary>
-    private static readonly HashSet<string> FrameworkKeys = new(StringComparer.Ordinal)
-    {
-        "Logging__LogLevel__Default",
-    };
+    private static bool IsFrameworkKey(string key) =>
+        key.StartsWith("Logging__", StringComparison.Ordinal);
 
     private static readonly string[] FieldTypes =
         ["string", "int", "bool", "enum", "secret", "path", "csv", "duration", "float"];
@@ -58,54 +59,116 @@ public class LeafDescriptorTests
     private static string? OptionalStr(JsonElement field, string name) =>
         field.TryGetProperty(name, out JsonElement v) ? v.GetString() : null;
 
-    /// <summary>Every KGSM_MONITOR_* variable named anywhere in the daemon's own source.</summary>
-    private static HashSet<string> EnvKeysInSource()
+    /// <summary>
+    /// Every environment variable that can configure the daemon, derived from
+    /// <c>kgsm-monitor.settings.json</c> — the source of truth. A variable overrides a key only if
+    /// that key exists in the file, so the file's leaves ARE the settable surface: each
+    /// <c>Section:Key</c> path is reachable as <c>Section__Key</c>.
+    /// </summary>
+    /// <remarks>
+    /// This reads the settings file rather than scanning the source for string literals because
+    /// with bound configuration there are no literals left to scan — the binder matches property
+    /// names against the file. Reading the file is also the stronger check: it is the same
+    /// artifact the daemon loads at runtime, so it cannot describe a surface the daemon does not
+    /// actually have.
+    /// </remarks>
+    private static HashSet<string> SettableEnvKeys()
     {
-        string src = Path.Combine(RepoRoot(), "src", "Monitor");
+        string path = Path.Combine(RepoRoot(), "src", "Monitor", "kgsm-monitor.settings.json");
+        Assert.True(File.Exists(path), $"the settings file is missing: {path}");
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
         var found = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (string file in Directory.EnumerateFiles(src, "*.cs", SearchOption.AllDirectories))
+        static void Walk(JsonElement node, string prefix, HashSet<string> into)
         {
-            // The build's own generated sources are not configuration reads.
-            if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal) ||
-                file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-                continue;
-
-            foreach (System.Text.RegularExpressions.Match m in
-                     System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(file), @"KGSM_MONITOR_[A-Z0-9_]+"))
-                found.Add(m.Value);
+            foreach (JsonProperty prop in node.EnumerateObject())
+            {
+                string key = prefix.Length == 0 ? prop.Name : $"{prefix}__{prop.Name}";
+                if (prop.Value.ValueKind == JsonValueKind.Object)
+                    Walk(prop.Value, key, into);
+                else
+                    into.Add(key);
+            }
         }
+
+        Walk(doc.RootElement, string.Empty, found);
 
         Assert.NotEmpty(found);   // a scan that finds nothing would pass every check below vacuously
         return found;
     }
 
-    // ── Coverage: the descriptor and the code agree, both ways ───────────────
+    // ── Coverage: the descriptor and the settings file agree, both ways ──────
 
     [Fact]
-    public void Every_env_var_the_monitor_reads_is_described()
+    public void Every_configurable_key_is_described()
     {
         var described = Fields().Select(f => Str(f, "env")).ToHashSet(StringComparer.Ordinal);
-        var missing = EnvKeysInSource().Where(k => !described.Contains(k)).OrderBy(k => k, StringComparer.Ordinal).ToList();
+        var missing = SettableEnvKeys()
+            .Where(k => !described.Contains(k) && !IsFrameworkKey(k))
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToList();
 
         Assert.True(missing.Count == 0,
-            "these variables are read by the monitor but not described in deploy/kgsm-monitor.leaf.json, so " +
-            "the Control Panel cannot show or set them:\n  " + string.Join("\n  ", missing));
+            "these keys are declared in kgsm-monitor.settings.json but not described in " +
+            "deploy/kgsm-monitor.leaf.json, so the Control Panel cannot show or set them:\n  " +
+            string.Join("\n  ", missing));
     }
 
     [Fact]
-    public void Every_described_env_var_is_real()
+    public void Every_described_key_is_really_settable()
     {
-        var inSource = EnvKeysInSource();
+        var settable = SettableEnvKeys();
         var fabricated = Fields()
             .Select(f => Str(f, "env"))
-            .Where(e => !inSource.Contains(e) && !FrameworkKeys.Contains(e))
+            .Where(e => !settable.Contains(e) && !IsFrameworkKey(e))
             .OrderBy(e => e, StringComparer.Ordinal)
             .ToList();
 
         Assert.True(fabricated.Count == 0,
-            "these descriptor fields name variables the monitor does not read — an override written for one " +
-            "would be reported as applied while changing nothing:\n  " + string.Join("\n  ", fabricated));
+            "these descriptor fields name keys that do not exist in kgsm-monitor.settings.json, so nothing " +
+            "binds them — an override written for one would be reported as applied while changing " +
+            "nothing:\n  " + string.Join("\n  ", fabricated));
+    }
+
+    [Fact]
+    public void Every_settings_key_binds_to_a_property()
+    {
+        // The settings file is only a source of truth if the daemon actually reads what it
+        // declares. A key with no matching property is inert: the panel offers it, an operator
+        // sets it, and the binder silently drops it.
+        var bound = typeof(MonitorSettings)
+            .GetProperties()
+            .Select(p => $"{MonitorSettings.Section}__{p.Name}")
+            .ToHashSet(StringComparer.Ordinal);
+
+        var orphaned = SettableEnvKeys()
+            .Where(k => k.StartsWith($"{MonitorSettings.Section}__", StringComparison.Ordinal))
+            .Where(k => !bound.Contains(k))
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.True(orphaned.Count == 0,
+            "these keys are declared in kgsm-monitor.settings.json but have no MonitorSettings property to " +
+            "bind to, so setting them changes nothing:\n  " + string.Join("\n  ", orphaned));
+    }
+
+    [Fact]
+    public void Every_settings_property_is_declared_in_the_file()
+    {
+        // The other direction: a property missing from the file has an invisible default. The
+        // panel shows no fallback tier for it and an operator cannot discover it exists.
+        var declared = SettableEnvKeys();
+        var undeclared = typeof(MonitorSettings)
+            .GetProperties()
+            .Select(p => $"{MonitorSettings.Section}__{p.Name}")
+            .Where(k => !declared.Contains(k))
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.True(undeclared.Count == 0,
+            "these MonitorSettings properties are not declared in kgsm-monitor.settings.json, so their " +
+            "defaults are invisible to anyone reading the file:\n  " + string.Join("\n  ", undeclared));
     }
 
     // ── Structure ────────────────────────────────────────────────────────────

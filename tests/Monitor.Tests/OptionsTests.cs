@@ -1,31 +1,31 @@
+using Microsoft.Extensions.Configuration;
+
 namespace TheKrystalShip.KGSM.Monitor.Tests;
 
 /// <summary>
-/// Env-var configuration. These methods mutate process environment, so they live in
-/// one class (xunit runs methods within a class sequentially) and each restores state.
+/// Configuration binding and normalization. These build a configuration in memory rather than
+/// mutating the process environment, so they say nothing about ambient state and run in parallel.
+/// The environment's role — overriding a settings-file key — is covered by
+/// <see cref="Environment_overrides_a_settings_file_key"/>, which is the one case that genuinely
+/// needs a real environment provider.
 /// </summary>
 public class OptionsTests
 {
-    private static readonly string[] Keys =
-    [
-        "KGSM_MONITOR_INTERVAL_MS", "KGSM_MONITOR_SOCKET", "KGSM_MONITOR_SOCKET_MODE",
-        "KGSM_MONITOR_MOUNT_FS_DENY", "KGSM_MONITOR_IFACE_DENY",
-        "KGSM_MONITOR_HOST_ID", "KGSM_MONITOR_HISTORY_DISABLED", "KGSM_MONITOR_DB_PATH",
-        "KGSM_MONITOR_PERSIST_MS", "KGSM_MONITOR_RAW_RETENTION_HOURS", "KGSM_MONITOR_ROLLUP_STEP_MIN",
-        "KGSM_MONITOR_ROLLUP_RETENTION_DAYS", "KGSM_MONITOR_MAINT_MS",
-    ];
-
-    private static void Clear()
+    private static MonitorOptions Bind(params (string Key, string Value)[] values)
     {
-        foreach (var k in Keys)
-            Environment.SetEnvironmentVariable(k, null);
+        IConfiguration config = new ConfigurationBuilder()
+            .AddInMemoryCollection(values.Select(v =>
+                new KeyValuePair<string, string?>($"{MonitorSettings.Section}:{v.Key}", v.Value)))
+            .Build();
+
+        return MonitorOptions.FromSettings(
+            config.GetSection(MonitorSettings.Section).Get<MonitorSettings>() ?? new MonitorSettings());
     }
 
     [Fact]
-    public void Defaults_apply_when_unset()
+    public void Defaults_apply_when_nothing_is_configured()
     {
-        Clear();
-        var o = MonitorOptions.FromEnvironment();
+        var o = Bind();
 
         Assert.Equal(1000, o.IntervalMs);
         Assert.Equal("/run/kgsm-monitor/metrics.sock", o.SocketPath);
@@ -37,51 +37,43 @@ public class OptionsTests
     }
 
     [Fact]
-    public void Overrides_are_read_from_environment()
+    public void Configured_values_are_bound()
     {
-        Clear();
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_INTERVAL_MS", "500");
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_SOCKET", "/tmp/x.sock");
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_SOCKET_MODE", "640");
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_MOUNT_FS_DENY", "nfs, cifs");
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_IFACE_DENY", "veth, docker, br-");
-        try
-        {
-            var o = MonitorOptions.FromEnvironment();
+        var o = Bind(
+            ("IntervalMs", "500"),
+            ("SocketPath", "/tmp/x.sock"),
+            ("SocketMode", "640"),
+            ("MountFsDeny", "nfs, cifs"),
+            ("IfaceDenyPrefixes", "veth, docker, br-"));
 
-            Assert.Equal(500, o.IntervalMs);
-            Assert.Equal("/tmp/x.sock", o.SocketPath);
-            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead, o.SocketMode); // 0640
-            Assert.Contains("nfs", o.MountFsDeny);
-            Assert.Contains("cifs", o.MountFsDeny);
-            Assert.Equal(["veth", "docker", "br-"], o.IfaceDenyPrefixes);
-        }
-        finally
-        {
-            Clear();
-        }
+        Assert.Equal(500, o.IntervalMs);
+        Assert.Equal("/tmp/x.sock", o.SocketPath);
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead, o.SocketMode); // 0640
+        Assert.Contains("nfs", o.MountFsDeny);
+        Assert.Contains("cifs", o.MountFsDeny);
+        Assert.Equal(["veth", "docker", "br-"], o.IfaceDenyPrefixes);
     }
 
     [Fact]
-    public void Sub_minimum_interval_is_ignored()
+    public void Sub_minimum_cadences_are_raised_to_their_floor()
     {
-        Clear();
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_INTERVAL_MS", "50"); // below 100ms floor
-        try
-        {
-            Assert.Equal(1000, MonitorOptions.FromEnvironment().IntervalMs);
-        }
-        finally
-        {
-            Clear();
-        }
+        // The floor is the nearest legal value to what was asked for. Reverting to the coded
+        // default instead would silently run at a cadence nobody named.
+        Assert.Equal(100, Bind(("IntervalMs", "50")).IntervalMs);
+        Assert.Equal(1000, Bind(("PersistMs", "500")).PersistMs);
+        Assert.Equal(1000, Bind(("ServerResyncMs", "10")).ServerResyncMs);
+        Assert.Equal(5000, Bind(("DiskUsageMs", "1")).DiskUsageMs);
+        Assert.Equal(1000, Bind(("MaintenanceMs", "0")).MaintenanceMs);
+        Assert.Equal(1, Bind(("RawRetentionHours", "0")).RawRetentionHours);
+        Assert.Equal(1, Bind(("RollupStepMin", "0")).RollupStepMin);
+        Assert.Equal(1, Bind(("RollupRetentionDays", "0")).RollupRetentionDays);
+        Assert.Equal(1, Bind(("EventRetentionDays", "0")).EventRetentionDays);
     }
 
     [Fact]
-    public void History_defaults_apply_when_unset()
+    public void History_defaults_apply_when_nothing_is_configured()
     {
-        Clear();
-        var o = MonitorOptions.FromEnvironment();
+        var o = Bind();
 
         Assert.True(o.HistoryEnabled);
         Assert.Equal("/var/lib/kgsm-monitor/metrics.db", o.HistoryDbPath);
@@ -94,59 +86,89 @@ public class OptionsTests
     }
 
     [Fact]
-    public void History_overrides_are_read_from_environment()
+    public void History_values_are_bound()
     {
-        Clear();
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_HISTORY_DISABLED", "1");
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_DB_PATH", "/tmp/hist.db");
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_PERSIST_MS", "30000");
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_RAW_RETENTION_HOURS", "48");
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_ROLLUP_STEP_MIN", "10");
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_ROLLUP_RETENTION_DAYS", "90");
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_MAINT_MS", "120000");
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_HOST_ID", "hotrod");
-        try
-        {
-            var o = MonitorOptions.FromEnvironment();
-            Assert.False(o.HistoryEnabled);
-            Assert.Equal("/tmp/hist.db", o.HistoryDbPath);
-            Assert.Equal(30_000, o.PersistMs);
-            Assert.Equal(48, o.RawRetentionHours);
-            Assert.Equal(10, o.RollupStepMin);
-            Assert.Equal(90, o.RollupRetentionDays);
-            Assert.Equal(120_000, o.MaintenanceMs);
-            Assert.Equal("hotrod", o.HostId);
-        }
-        finally { Clear(); }
+        var o = Bind(
+            ("HistoryDisabled", "true"),
+            ("HistoryDbPath", "/tmp/hist.db"),
+            ("PersistMs", "30000"),
+            ("RawRetentionHours", "48"),
+            ("RollupStepMin", "10"),
+            ("RollupRetentionDays", "90"),
+            ("MaintenanceMs", "120000"),
+            ("HostId", "hotrod"));
+
+        Assert.False(o.HistoryEnabled);
+        Assert.Equal("/tmp/hist.db", o.HistoryDbPath);
+        Assert.Equal(30_000, o.PersistMs);
+        Assert.Equal(48, o.RawRetentionHours);
+        Assert.Equal(10, o.RollupStepMin);
+        Assert.Equal(90, o.RollupRetentionDays);
+        Assert.Equal(120_000, o.MaintenanceMs);
+        Assert.Equal("hotrod", o.HostId);
     }
 
     [Fact]
-    public void Sub_minimum_persist_ms_is_ignored()
+    public void The_two_history_switches_are_independent()
     {
-        Clear();
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_PERSIST_MS", "500"); // below 1000ms floor
-        try
-        {
-            Assert.Equal(15_000, MonitorOptions.FromEnvironment().PersistMs);
-        }
-        finally { Clear(); }
+        Assert.True(Bind(("EventHistoryDisabled", "true")).HistoryEnabled);
+        Assert.False(Bind(("EventHistoryDisabled", "true")).EventHistoryEnabled);
+        Assert.True(Bind(("HistoryDisabled", "true")).EventHistoryEnabled);
     }
 
     [Fact]
-    public void Malformed_socket_mode_keeps_default()
+    public void Malformed_socket_mode_keeps_the_default()
     {
-        Clear();
-        Environment.SetEnvironmentVariable("KGSM_MONITOR_SOCKET_MODE", "not-octal");
+        var o = Bind(("SocketMode", "not-octal"));
+
+        Assert.Equal(
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite,
+            o.SocketMode);
+    }
+
+    [Fact]
+    public void Blank_values_fall_back_rather_than_configuring_an_empty_path()
+    {
+        // A settings file ships HostId as "" and it must still resolve to the machine name; the
+        // same rule keeps a blank socket or database path from producing an unusable daemon.
+        var o = Bind(("HostId", ""), ("SocketPath", ""), ("HistoryDbPath", "   "));
+
+        Assert.Equal(Environment.MachineName, o.HostId);
+        Assert.Equal("/run/kgsm-monitor/metrics.sock", o.SocketPath);
+        Assert.Equal("/var/lib/kgsm-monitor/metrics.db", o.HistoryDbPath);
+    }
+
+    [Fact]
+    public void An_empty_kgsm_path_leaves_per_server_sampling_off()
+    {
+        Assert.False(Bind().KgsmEnabled);
+        Assert.True(Bind(("KgsmPath", "/usr/local/bin/kgsm")).KgsmEnabled);
+    }
+
+    [Fact]
+    public void Environment_overrides_a_settings_file_key()
+    {
+        // The whole override model in one assertion: the settings file declares the key, the
+        // environment changes it. Sources resolve in order, so the environment provider must be
+        // registered after the file — get that backwards and an override reads as applied while
+        // changing nothing.
+        const string Key = "Monitor__SocketPath";
+        Environment.SetEnvironmentVariable(Key, "/tmp/from-env.sock");
         try
         {
-            var o = MonitorOptions.FromEnvironment();
-            Assert.Equal(
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite,
-                o.SocketMode);
+            IConfiguration config = new ConfigurationBuilder()
+                .AddInMemoryCollection([new KeyValuePair<string, string?>("Monitor:SocketPath", "/from-file.sock")])
+                .AddEnvironmentVariables()
+                .Build();
+
+            var o = MonitorOptions.FromSettings(
+                config.GetSection(MonitorSettings.Section).Get<MonitorSettings>()!);
+
+            Assert.Equal("/tmp/from-env.sock", o.SocketPath);
         }
         finally
         {
-            Clear();
+            Environment.SetEnvironmentVariable(Key, null);
         }
     }
 }

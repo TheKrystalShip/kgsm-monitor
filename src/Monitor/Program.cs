@@ -17,21 +17,33 @@ var builder = WebApplication.CreateSlimBuilder(args);
 //      AppContext.BaseDirectory (the binary's own dir, /opt/kgsm-monitor), where deploy installs it.
 //   2. It is named kgsm-monitor.settings.json, NOT appsettings.json, so it can never collide with a
 //      sibling ecosystem service's config if they ever share a directory.
-// optional:true so a missing file never stops the daemon; env vars (Logging__LogLevel__*) still override.
+// optional:true so a missing file never stops the daemon.
 builder.Configuration.AddJsonFile(
     Path.Combine(AppContext.BaseDirectory, "kgsm-monitor.settings.json"), optional: true, reloadOnChange: false);
 
+// Environment variables are re-registered so they sit LAST and therefore win. Configuration
+// resolves by source order, and the settings file above was appended after the sources the builder
+// installed — including the builder's own environment provider. Without this line the file would
+// outrank every Monitor__* and Logging__* variable, and an override would read as applied while
+// changing nothing.
+builder.Configuration.AddEnvironmentVariables();
+
 // Ecosystem-standard logging (see ../tks/logging-convention.md): one journald-native SystemdConsole
 // sink (the <N> syslog priority prefix lets `journalctl -p` filter by level). AddConfiguration binds the
-// "Logging" section from kgsm-monitor.settings.json + env overrides (Logging__LogLevel__Default=Debug) —
-// wired explicitly so the level knob is deterministic on the slim builder rather than relying on an implicit
-// default. Monitor's own knobs still come from env (MonitorOptions.FromEnvironment); this is logging only.
+// "Logging" section from kgsm-monitor.settings.json plus any Logging__LogLevel__Default override —
+// wired explicitly so the level knob is deterministic on the slim builder rather than relying on an
+// implicit default.
 builder.Logging.ClearProviders();
 builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
 builder.Logging.AddSystemdConsole();
 
-// All configuration comes from environment variables (systemd-friendly, AOT-safe).
-var options = MonitorOptions.FromEnvironment();
+// kgsm-monitor.settings.json is the source of truth for every knob: each is declared there with
+// its default, and an environment variable (Monitor__IntervalMs, Monitor__HistoryDbPath, …) may
+// only override a key that exists in it. A variable naming an undeclared key binds to nothing,
+// which is precisely what stops a stale override from looking applied.
+var settings = builder.Configuration.GetSection(MonitorSettings.Section).Get<MonitorSettings>()
+    ?? new MonitorSettings();
+var options = MonitorOptions.FromSettings(settings);
 builder.Services.AddSingleton(options);
 
 // Per-server sampling (Slice 2) is opt-in: only when a KGSM path is configured. The
@@ -58,8 +70,8 @@ if (options.KgsmEnabled)
 builder.Services.AddSingleton<MetricsSampler>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MetricsSampler>());
 
-// Metrics history (opt-out via KGSM_MONITOR_HISTORY_DISABLED): the monitor is the single source of
-// truth for history. The persist loop flushes the latest frame to SQLite every KGSM_MONITOR_PERSIST_MS;
+// Metrics history (opt-out via Monitor__HistoryDisabled): the monitor is the single source of
+// truth for history. The persist loop flushes the latest frame to SQLite every Monitor__PersistMs;
 // maintenance rolls up + prunes; GET /metrics/history serves windowed queries. Raw ADO SQLite (AOT-safe).
 if (options.HistoryEnabled)
 {

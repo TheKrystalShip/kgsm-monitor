@@ -6,7 +6,7 @@ namespace TheKrystalShip.KGSM.Monitor.History;
 /// reclaims disk via incremental vacuum, and — when event history is wired — prunes expired rows from
 /// the event store in the same pass (events carry no rollup tier: discrete facts, not a sampled
 /// series, so pruning is their only retention step). Runs once at startup (catch-up after downtime —
-/// gaps are honest, not backfilled) then on the <c>KGSM_MONITOR_MAINT_MS</c> timer (default 60s).
+/// gaps are honest, not backfilled) then on the <c>Monitor__MaintenanceMs</c> timer (default 60s).
 /// </summary>
 /// <remarks>
 /// <see cref="EventHistoryStore"/> is an <b>optional</b> constructor parameter: this service is

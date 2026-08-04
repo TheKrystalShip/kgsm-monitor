@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — configuration is bound from `kgsm-monitor.settings.json`, which is now the source of truth
+
+- **Every knob is declared in the settings file and bound to `MonitorSettings`.** The file ships all
+  22 keys with their defaults under a `Monitor` section, and an environment variable overrides one
+  of them by spelling its path with `__` (`Monitor__IntervalMs`, `Monitor__HistoryDbPath`). The
+  hand-rolled `MonitorOptions.FromEnvironment()` and its flat `KGSM_MONITOR_*` names are gone; what
+  remains is `MonitorOptions.FromSettings`, which normalizes bound values rather than reading the
+  environment itself.
+
+  The point is that a variable naming a key the file does not declare now binds to nothing and
+  changes nothing — there is no longer a way to configure the daemon that is invisible in the file.
+  Binding is source-generated (the binder generator is on under `PublishAot`), so the AOT publish
+  stays at zero IL warnings and nothing here costs reflection.
+
+- **Environment variables are re-registered after the settings file so they win.** Configuration
+  resolves by source order, and the explicitly-loaded file is appended after everything the slim
+  builder installed — including its own environment provider. Without the re-registration the file
+  outranks every `Monitor__*` and `Logging__*` variable. This was already true of the
+  logging-only file that preceded this change: `Logging__LogLevel__Default` could not in fact
+  override the level the file set, despite being documented as able to.
+
+- **A cadence below its floor is raised to the floor** instead of reverting to the coded default.
+  The floor is the nearest legal value to what was asked for; reverting meant a mistyped interval
+  ran at a cadence nobody named. The floors themselves are unchanged, and they are the same bounds
+  the Control Panel already rejects against before restarting anything.
+
+- **Boolean knobs accept `true`/`false` only.** The hand-rolled parser also took `1/0`, `yes/no` and
+  `on/off`; standard binding does not. The Control Panel writes `true`/`false`, so nothing on the
+  writing side is affected.
+
+- `LeafDescriptorTests` pins the surface in four directions instead of scanning the source for
+  string literals — there are none left to scan. A knob must be a `MonitorSettings` property, a key
+  in the settings file, and a descriptor entry; any one missing fails the build naming which. A
+  property with no key has an invisible default, a key with no property binds to nothing, and either
+  without a descriptor entry is invisible to the panel.
+
+- Descriptor `env` values move to the new names while every `key` stays exactly as it was — stored
+  overrides are keyed by `key`, so renaming one would orphan a live override and silently revert a
+  leaf to its floor.
+
 ### Changed — kgsm-lib 2.0.0 (the socket event transport is gone)
 - **Pinned to `TheKrystalShip.KGSM.Lib` 2.0.0**, which removes `UnixSocketClient`,
   `KgsmEventTransport` and `KgsmOptions.SocketPath`/`EventTransport`. This service already read the
