@@ -50,7 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`floorSources` declares the settings file, first.** The list is lowest-precedence-first, and the
   settings file is the base the environment overrides, so it belongs at the bottom. Omitted entirely,
   the Control Panel could not see where a knob's value came from once the file started carrying one;
-  listed last, it would outrank the unit and report the file's defaults as the deployed values.
+  listed last, it would outrank the unit and report the file's defaults as the deployed values. A
+  test pins the ordering, because nothing else catches it: the wrong order builds and runs fine, and
+  only shows up as a wrong value on the Control Panel after a deploy.
 
 ### Changed — kgsm-lib 2.0.0 (the socket event transport is gone)
 - **Pinned to `TheKrystalShip.KGSM.Lib` 2.0.0**, which removes `UnixSocketClient`,
