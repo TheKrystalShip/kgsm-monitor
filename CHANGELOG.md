@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a knob written blank no longer takes the daemon down
+- **Every number and flag in the settings type is nullable, so "written blank" means unset.** Binding
+  a blank value to a non-nullable `int` throws, which made a single stray `Monitor__IntervalMs=` line
+  in an env file a startup crash; a null one binds to `0`/`false`, silently discarding the coded
+  default — a 0ms sampling cadence nobody asked for. Null now means unset and the coded default
+  applies. A value that is present but is not a number still fails loudly, which is the point of
+  typing it.
+
 ### Changed — configuration is bound from `kgsm-monitor.settings.json`, which is now the source of truth
 
 - **Every knob is declared in the settings file and bound to `MonitorSettings`.** The file ships all

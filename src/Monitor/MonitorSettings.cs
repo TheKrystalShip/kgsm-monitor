@@ -13,6 +13,15 @@ namespace TheKrystalShip.KGSM.Monitor;
 /// octal parsing and the machine-name fallback happen, so the raw configuration and the runtime
 /// view stay separable. Binding is source-generated (the binder generator is on under
 /// <c>PublishAot</c>), so this stays reflection-free.
+/// <para>
+/// Every number and flag is <b>nullable</b>, and null means "not written" — the coded default in
+/// <see cref="MonitorOptions"/> applies. Two binder behaviours make this load-bearing rather than
+/// stylistic: a blank value (<c>Monitor__IntervalMs=</c>, a single stray line in an env file)
+/// binds to a non-nullable <see cref="int"/> by throwing, taking the daemon down at startup; and a
+/// JSON null binds to <c>0</c>/<c>false</c>, silently discarding the default a property initializer
+/// here would have carried. Nullable turns both into "unset". A value that is present but is not a
+/// number still fails loudly, which is the point of typing it at all.
+/// </para>
 /// </remarks>
 public sealed class MonitorSettings
 {
@@ -20,7 +29,7 @@ public sealed class MonitorSettings
     public const string Section = "Monitor";
 
     /// <summary>Sampling cadence in milliseconds. Floor 100 — a lower value is raised to it.</summary>
-    public int IntervalMs { get; set; } = 1000;
+    public int? IntervalMs { get; set; }
 
     /// <summary>Unix domain socket to listen on. Lives inside the per-service runtime dir
     /// (systemd <c>RuntimeDirectory=kgsm-monitor</c>) so a co-located API connects to the same
@@ -58,17 +67,17 @@ public sealed class MonitorSettings
     /// <summary>How often to re-list KGSM instances (the source-of-truth resync), in milliseconds.
     /// Floor 1000. This shells out to KGSM — a process spawn, the very cost the metrics path
     /// avoids — so it runs on its own slow cadence, off the metrics tick.</summary>
-    public int ServerResyncMs { get; set; } = 15_000;
+    public int? ServerResyncMs { get; set; }
 
     /// <summary>Whether to read KGSM lifecycle events from the journal for low-latency watch-list
     /// deltas. With this off, per-server metrics still work — the periodic resync floor remains the
     /// source of truth — but engine event history stops being recorded.</summary>
-    public bool EventsEnabled { get; set; } = true;
+    public bool? EventsEnabled { get; set; }
 
     /// <summary>How often to recompute each server's on-disk footprint (a recursive directory
     /// walk), in milliseconds. Floor 5000. This stats every file under the tree, far heavier than
     /// the cgroup reads, so it runs on its own slow cadence.</summary>
-    public int DiskUsageMs { get; set; } = 60_000;
+    public int? DiskUsageMs { get; set; }
 
     /// <summary>Identity this host persists its <c>host</c>-kind metrics under. Empty (the default)
     /// resolves to the machine name — the same default kgsm-api uses for its own host id, so the
@@ -77,7 +86,7 @@ public sealed class MonitorSettings
 
     /// <summary>Turns off metrics-history persistence and the <c>/metrics/history</c> endpoint,
     /// leaving the monitor live-only.</summary>
-    public bool HistoryDisabled { get; set; }
+    public bool? HistoryDisabled { get; set; }
 
     /// <summary>SQLite file for the metrics history store. Defaults under the systemd
     /// <c>StateDirectory</c> (persistent), not the tmpfs runtime dir where the socket lives.</summary>
@@ -85,24 +94,24 @@ public sealed class MonitorSettings
 
     /// <summary>How often the persist loop flushes the latest frame to history, ms. Floor 1000,
     /// decoupled from the sample tick.</summary>
-    public int PersistMs { get; set; } = 15_000;
+    public int? PersistMs { get; set; }
 
     /// <summary>Raw-tier retention, hours. Floor 1. Also the tier-select boundary: a query range
     /// at or under this reads raw, above it reads rollup.</summary>
-    public int RawRetentionHours { get; set; } = 24;
+    public int? RawRetentionHours { get; set; }
 
     /// <summary>Rollup bucket width, minutes. Floor 1.</summary>
-    public int RollupStepMin { get; set; } = 5;
+    public int? RollupStepMin { get; set; }
 
     /// <summary>Rollup-tier retention, days. Floor 1.</summary>
-    public int RollupRetentionDays { get; set; } = 30;
+    public int? RollupRetentionDays { get; set; }
 
     /// <summary>How often maintenance (rollup + prune + vacuum) runs, ms. Floor 1000.</summary>
-    public int MaintenanceMs { get; set; } = 60_000;
+    public int? MaintenanceMs { get; set; }
 
     /// <summary>Turns off KGSM engine-event history. Independent of <see cref="HistoryDisabled"/>
     /// (metrics) — either can be toggled without the other.</summary>
-    public bool EventHistoryDisabled { get; set; }
+    public bool? EventHistoryDisabled { get; set; }
 
     /// <summary>SQLite file for the event-history store. A separate file from
     /// <see cref="HistoryDbPath"/> — its own WAL and writer, no contention with the metrics
@@ -111,5 +120,5 @@ public sealed class MonitorSettings
 
     /// <summary>Event-history retention, days. Floor 1. No rollup tier (discrete facts, not a
     /// sampled series) — rows simply age out at this cutoff.</summary>
-    public int EventRetentionDays { get; set; } = 30;
+    public int? EventRetentionDays { get; set; }
 }

@@ -22,6 +22,51 @@ public class OptionsTests
             config.GetSection(MonitorSettings.Section).Get<MonitorSettings>() ?? new MonitorSettings());
     }
 
+    // A knob written blank is "unset", not a startup crash and not zero. Both failure modes are real
+    // binder behaviour on a non-nullable property: a blank value throws, and a null one binds to
+    // 0/false — so `Monitor__IntervalMs=` left in an env file would have taken the daemon down, and a
+    // JSON null would have set a 0ms sampling cadence nobody asked for. Every number and flag here is
+    // nullable so both land on the coded default instead.
+    [Fact]
+    public void A_blank_value_means_unset_and_takes_the_coded_default()
+    {
+        var o = Bind(
+            (nameof(MonitorSettings.IntervalMs), ""),
+            (nameof(MonitorSettings.ServerResyncMs), ""),
+            (nameof(MonitorSettings.DiskUsageMs), ""),
+            (nameof(MonitorSettings.PersistMs), ""),
+            (nameof(MonitorSettings.RawRetentionHours), ""),
+            (nameof(MonitorSettings.RollupStepMin), ""),
+            (nameof(MonitorSettings.RollupRetentionDays), ""),
+            (nameof(MonitorSettings.MaintenanceMs), ""),
+            (nameof(MonitorSettings.EventRetentionDays), ""),
+            (nameof(MonitorSettings.EventsEnabled), ""),
+            (nameof(MonitorSettings.HistoryDisabled), ""),
+            (nameof(MonitorSettings.EventHistoryDisabled), ""));
+
+        var defaults = new MonitorOptions();
+        Assert.Equal(defaults.IntervalMs, o.IntervalMs);
+        Assert.Equal(defaults.ServerResyncMs, o.ServerResyncMs);
+        Assert.Equal(defaults.DiskUsageMs, o.DiskUsageMs);
+        Assert.Equal(defaults.PersistMs, o.PersistMs);
+        Assert.Equal(defaults.RawRetentionHours, o.RawRetentionHours);
+        Assert.Equal(defaults.RollupStepMin, o.RollupStepMin);
+        Assert.Equal(defaults.RollupRetentionDays, o.RollupRetentionDays);
+        Assert.Equal(defaults.MaintenanceMs, o.MaintenanceMs);
+        Assert.Equal(defaults.EventRetentionDays, o.EventRetentionDays);
+        Assert.Equal(defaults.EventsEnabled, o.EventsEnabled);
+        Assert.Equal(defaults.HistoryEnabled, o.HistoryEnabled);
+        Assert.Equal(defaults.EventHistoryEnabled, o.EventHistoryEnabled);
+    }
+
+    // The other half of the contract: a value that is present but is not a number is NOT quietly
+    // ignored. Typed configuration is worth having only if it refuses what it cannot read.
+    [Fact]
+    public void A_value_that_is_not_a_number_is_refused()
+    {
+        Assert.ThrowsAny<Exception>(() => Bind((nameof(MonitorSettings.IntervalMs), "soon")));
+    }
+
     [Fact]
     public void Defaults_apply_when_nothing_is_configured()
     {

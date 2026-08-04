@@ -160,7 +160,7 @@ public sealed class MonitorOptions
 
         return new MonitorOptions
         {
-            IntervalMs = Floor(s.IntervalMs, 100),
+            IntervalMs = Floor(s.IntervalMs ?? defaults.IntervalMs, 100),
             SocketPath = Or(s.SocketPath, defaults.SocketPath),
             SocketMode = ParseMode(s.SocketMode, defaults.SocketMode),
             MountFsDeny = new HashSet<string>(SplitCsv(s.MountFsDeny), StringComparer.Ordinal),
@@ -169,20 +169,20 @@ public sealed class MonitorOptions
                 : defaults.IfaceDenyPrefixes,
             KgsmPath = s.KgsmPath?.Trim() ?? string.Empty,
             KgsmJournalDir = Or(s.KgsmJournalDir, defaults.KgsmJournalDir),
-            ServerResyncMs = Floor(s.ServerResyncMs, 1000),
-            EventsEnabled = s.EventsEnabled,
-            DiskUsageMs = Floor(s.DiskUsageMs, 5000),
+            ServerResyncMs = Floor(s.ServerResyncMs ?? defaults.ServerResyncMs, 1000),
+            EventsEnabled = s.EventsEnabled ?? defaults.EventsEnabled,
+            DiskUsageMs = Floor(s.DiskUsageMs ?? defaults.DiskUsageMs, 5000),
             HostId = Or(s.HostId, Environment.MachineName),
-            HistoryEnabled = !s.HistoryDisabled,
+            HistoryEnabled = !(s.HistoryDisabled ?? !defaults.HistoryEnabled),
             HistoryDbPath = Or(s.HistoryDbPath, defaults.HistoryDbPath),
-            PersistMs = Floor(s.PersistMs, 1000),
-            RawRetentionHours = Floor(s.RawRetentionHours, 1),
-            RollupStepMin = Floor(s.RollupStepMin, 1),
-            RollupRetentionDays = Floor(s.RollupRetentionDays, 1),
-            MaintenanceMs = Floor(s.MaintenanceMs, 1000),
-            EventHistoryEnabled = !s.EventHistoryDisabled,
+            PersistMs = Floor(s.PersistMs ?? defaults.PersistMs, 1000),
+            RawRetentionHours = Floor(s.RawRetentionHours ?? defaults.RawRetentionHours, 1),
+            RollupStepMin = Floor(s.RollupStepMin ?? defaults.RollupStepMin, 1),
+            RollupRetentionDays = Floor(s.RollupRetentionDays ?? defaults.RollupRetentionDays, 1),
+            MaintenanceMs = Floor(s.MaintenanceMs ?? defaults.MaintenanceMs, 1000),
+            EventHistoryEnabled = !(s.EventHistoryDisabled ?? !defaults.EventHistoryEnabled),
             EventsDbPath = Or(s.EventsDbPath, defaults.EventsDbPath),
-            EventRetentionDays = Floor(s.EventRetentionDays, 1),
+            EventRetentionDays = Floor(s.EventRetentionDays ?? defaults.EventRetentionDays, 1),
         };
     }
 
