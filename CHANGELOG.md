@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `events.db` is a declared index, rebuildable from the journal
+- **`POST /events/rebuild` reconstructs the event index from the engine's journal.** The record is
+  the engine's append-only NDJSON; `events.db` is derived from it, exists so a query like "the last
+  50 events for this instance, paged" answers in bounded time, and is now recoverable when it is
+  lost, corrupted, or was never written because the monitor was down while the engine kept emitting.
+  It replays every surviving segment through the same `AppendAsync` the live reader uses, so a
+  rebuilt index and a streamed one are the same rows by construction.
+
+  Three properties make it safe to run against a live daemon, and each is pinned by a test:
+  it is **additive** — it inserts what is missing and never clears the table, because the journal is
+  pruned on age while the index is not, so a wipe would destroy rows whose segments are already gone;
+  it **never moves the live cursor**, which is where streaming resumes and not something a recovery
+  action should silently skip past; and it **never clears a recorded gap**, since replaying the
+  segments that survived does not bring back the events that did not.
+
+  The response is measured, not derived: segments read, the oldest and newest that still exist,
+  lines, inserted, already-present, and unparseable. `no_journal` (directory absent) and a
+  zero-row `ok` are different answers to different questions. A second concurrent call gets `409`
+  rather than a competing full scan.
+
+### Added — retention layering is checked, not assumed
+- **The monitor reports at startup whether the journal still reaches back as far as the index claims
+  to**, reading `event_journal_retention_days` from the engine and comparing it against
+  `KGSM_MONITOR_EVENT_RETENTION_DAYS`. Configured the wrong way round, the index keeps serving rows
+  whose segments have been pruned — correct until something rebuilds, at which point history
+  silently shortens to the journal's window. That is now visible as an error log naming both numbers
+  instead of a surprise during recovery.
+
+  It reports and does not correct: retention lives in the engine's config, the engine prunes on age
+  alone and never consults a consumer, and a leaf quietly rewriting the engine's configuration to
+  suit itself would invert that ownership. A value it cannot read is logged as unverified, never
+  assumed to be fine.
+
 ### Changed — engine events come from the journal, not a socket
 - **The monitor tails KGSM's append-only event journal** (`KGSM_MONITOR_KGSM_JOURNAL`, default
   `/var/lib/kgsm/events`) instead of binding a socket for the engine to push to.

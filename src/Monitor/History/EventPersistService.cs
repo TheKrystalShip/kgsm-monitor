@@ -5,12 +5,13 @@ using TheKrystalShip.KGSM.Events;
 namespace TheKrystalShip.KGSM.Monitor.History;
 
 /// <summary>
-/// Persists every KGSM engine event to <see cref="EventHistoryStore"/> via
+/// Indexes every KGSM engine event into <see cref="EventHistoryStore"/> via
 /// <see cref="IEventService.RegisterRawHandler"/> — fires on every deserialized envelope, known or
 /// unknown <c>EventType</c>, independent of (and never suppressing) the monitor's typed per-server
 /// dispatch (<see cref="Sampling.ServerSampler"/>'s lifecycle handlers keep driving watch-list
 /// resync unmodified). No background loop of its own: the work happens entirely inside the callback
-/// the journal reader's loop invokes, so <see cref="ExecuteAsync"/> just logs startup and returns.
+/// the journal reader's loop invokes, so <see cref="ExecuteAsync"/> only logs startup and checks
+/// retention layering.
 /// <para>
 /// It also records journal gaps, so a history missing a stretch of events says so rather than
 /// reading as complete. Only this service can: it is the one component that knows the store the
@@ -25,20 +26,25 @@ namespace TheKrystalShip.KGSM.Monitor.History;
 /// <c>IEnumerable&lt;IHostedService&gt;</c>) before calling <c>StartAsync</c> on any of them. So this
 /// constructor runs, and the raw handler is registered, strictly before
 /// <see cref="Sampling.ServerSampler"/>'s <c>ExecuteAsync</c> can run — and it is that method, not
-/// this one, that owns the single <see cref="IEventService.Initialize"/> call binding the event
-/// socket. This service deliberately never calls <c>Initialize()</c> itself (a second call would
-/// double-bind the socket); it only ever registers a handler on the shared singleton.
+/// this one, that owns the single <see cref="IEventService.Initialize"/> call that starts the
+/// journal read loop. This service only ever registers a handler on the shared singleton.
 /// </remarks>
 public sealed class EventPersistService : BackgroundService
 {
+    /// <summary>The engine config key holding how many days of journal segments survive pruning.</summary>
+    private const string JournalRetentionKey = "event_journal_retention_days";
+
     private readonly EventHistoryStore _store;
+    private readonly IConfigService _config;
     private readonly MonitorOptions _options;
     private readonly ILogger<EventPersistService> _logger;
 
     public EventPersistService(
-        IEventService events, EventHistoryStore store, MonitorOptions options, ILogger<EventPersistService> logger)
+        IEventService events, EventHistoryStore store, IConfigService config, MonitorOptions options,
+        ILogger<EventPersistService> logger)
     {
         _store = store;
+        _config = config;
         _options = options;
         _logger = logger;
 
@@ -80,15 +86,72 @@ public sealed class EventPersistService : BackgroundService
         }
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Yield before the config read below: BackgroundService runs ExecuteAsync inline from
+        // StartAsync, so a synchronous kgsm exec here would stall host startup.
+        await Task.Yield();
+
         _logger.LogInformation(
-            "event history: persisting engine events via raw handler (db={Db}, retention={RetentionDays}d)",
+            "event history: indexing engine events via raw handler (db={Db}, retention={RetentionDays}d)",
             _options.EventsDbPath, _options.EventRetentionDays);
 
-        // Nothing to loop: the raw handler registered in the constructor does the actual work,
-        // invoked directly by the event socket's read loop (owned by ServerSampler). Returning a
-        // completed task here just satisfies BackgroundService's contract.
-        return Task.CompletedTask;
+        CheckRetentionLayering();
+
+        // Nothing to loop after that: the raw handler registered in the constructor does the actual
+        // work, invoked directly by the journal reader's read loop (owned by ServerSampler).
+    }
+
+    /// <summary>
+    /// Report whether the journal still reaches back as far as this index claims to.
+    /// </summary>
+    /// <remarks>
+    /// The index is derived from the journal, so journal retention must be <b>≥</b> index retention.
+    /// Configured the other way round, the store keeps serving rows whose segments have been pruned
+    /// — correct until something rebuilds, at which point history silently shortens to the journal's
+    /// window. Reporting it at startup turns a latent data-loss configuration into a visible one.
+    /// <para>
+    /// The monitor reports and does not correct: retention lives in the engine's config, the engine
+    /// prunes on age alone and never consults a consumer, and a leaf quietly rewriting the engine's
+    /// configuration to suit itself would invert that ownership. An unreadable value is logged as
+    /// unknown, never assumed to be fine.
+    /// </para>
+    /// </remarks>
+    internal void CheckRetentionLayering()
+    {
+        string? raw;
+        try
+        {
+            raw = _config.Get(JournalRetentionKey);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex, "event history: could not read {Key} from kgsm; journal coverage is unverified", JournalRetentionKey);
+            return;
+        }
+
+        if (!int.TryParse(raw, out int journalDays))
+        {
+            _logger.LogWarning(
+                "event history: kgsm reported no usable {Key} (got {Raw}); journal coverage is unverified",
+                JournalRetentionKey, string.IsNullOrEmpty(raw) ? "nothing" : raw);
+            return;
+        }
+
+        if (journalDays < _options.EventRetentionDays)
+        {
+            _logger.LogError(
+                "event history: journal retention ({JournalDays}d) is shorter than index retention ({IndexDays}d) — "
+                + "a rebuild would return only {JournalDays}d of history. Raise {Key} in kgsm's config, or lower "
+                + "KGSM_MONITOR_EVENT_RETENTION_DAYS to match",
+                journalDays, _options.EventRetentionDays, journalDays, JournalRetentionKey);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "event history: journal retention {JournalDays}d covers index retention {IndexDays}d",
+                journalDays, _options.EventRetentionDays);
+        }
     }
 }

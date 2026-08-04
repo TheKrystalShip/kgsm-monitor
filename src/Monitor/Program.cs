@@ -68,16 +68,17 @@ if (options.HistoryEnabled)
     builder.Services.AddHostedService<MetricsPersistService>();
 }
 
-// Event history (event-history-plan.md Phase B): the monitor is the single source of truth for KGSM
-// ENGINE events (server-triggered lifecycle/config/etc, delivered over the event socket). Gated on
-// KgsmEnabled (needs IEventService, only registered above under that flag) AND EventHistoryEnabled
-// (an independent opt-out from metrics history). A separate events.db (own WAL/single-writer gate) —
-// no contention with the 15s metrics flusher. GET /events serves windowed/filtered queries; kgsm-api
-// merges this with its own API-only audit rows at read time (Phase C) — the monitor stays a neutral
-// leaf with no dependency on the API.
+// Event index: the monitor owns the queryable index over KGSM ENGINE events (server-triggered
+// lifecycle/config/etc). The record itself is the engine's append-only journal — events.db is derived
+// from it and rebuildable from it (POST /events/rebuild). Gated on KgsmEnabled (needs IEventService,
+// only registered above under that flag) AND EventHistoryEnabled (an independent opt-out from metrics
+// history). A separate events.db (own WAL/single-writer gate) — no contention with the 15s metrics
+// flusher. GET /events serves windowed/filtered queries; kgsm-api merges this with its own API-only
+// audit rows at read time — the monitor stays a neutral leaf with no dependency on the API.
 if (options.KgsmEnabled && options.EventHistoryEnabled)
 {
     builder.Services.AddSingleton<EventHistoryStore>();
+    builder.Services.AddSingleton<EventIndexRebuilder>();
 
     // Replaces the library's default file-backed cursor store, registered above by
     // AddKgsmServices — last registration wins. The monitor's position belongs in the same
@@ -174,6 +175,20 @@ if (options.KgsmEnabled && options.EventHistoryEnabled)
         EventHistoryResponse resp = await store.QueryEventsAsync(
             instance, type, sinceMs, untilMs, beforeTsMs, before_id, lim, blueprint, ct);
         return Results.Json(resp, MonitorHistoryJsonContext.Default.EventHistoryResponse);
+    });
+
+    // Rebuild the index from the journal it is derived from — the operator's recovery path when
+    // events.db is lost, corrupted, or was never written (a monitor that was down while the engine
+    // kept emitting). Additive and idempotent: it inserts what is missing, never clears the table,
+    // never moves the live cursor, and never erases a recorded gap. Safe to call while streaming.
+    // POST because it writes, though it is the rare write with no arguments to get wrong.
+    app.MapPost("/events/rebuild", async (EventIndexRebuilder rebuilder, CancellationToken ct) =>
+    {
+        EventIndexRebuildResult result = await rebuilder.RebuildAsync(ct);
+        return result.Status == "busy"
+            ? Results.Json(result, MonitorHistoryJsonContext.Default.EventIndexRebuildResult,
+                statusCode: StatusCodes.Status409Conflict)
+            : Results.Json(result, MonitorHistoryJsonContext.Default.EventIndexRebuildResult);
     });
 }
 

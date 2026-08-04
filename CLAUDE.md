@@ -16,7 +16,10 @@ memory, and serves it over a **unix-socket `GET /metrics`** (HTTP/1.1, unauthent
 pull-only). It is also the **single source of truth for metrics history**: a persist loop
 writes the latest frame to a SQLite store (raw + rollup tiers) and `GET /metrics/history`
 serves windowed queries (see `src/Monitor/History/`; kgsm-api relays this endpoint verbatim).
-Authoritative docs:
+
+For **engine events** its role is narrower and worth stating precisely: the monitor owns the
+**index**, not the record. The record is kgsm's append-only journal; `events.db` is derived from
+it and rebuildable from it. See the gotchas below. Authoritative docs:
 
 - **`PLAN.md`** — full design, decisions, slice-by-slice tracker.
 - **`docs/integration.md`** — the consumer contract (what kgsm-api / any scraper must handle).
@@ -122,7 +125,7 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
   `<Version>` on ANY change to `Snapshot.cs` or the JSON context** — NuGet caches by id+version,
   so a same-version repack serves a stale dll to kgsm-api. Compatibility is additive-only
   (consumers ignore unknown fields/`kind`s); see `docs/integration.md §7`.
-- **kgsm-lib version is pinned and load-bearing** (`1.28.0` in `Monitor.csproj`). It resolves
+- **kgsm-lib version is pinned and load-bearing** (`1.51.0` in `Monitor.csproj`). It resolves
   from the local feed in `nuget.config` (`/home/heisen/local-nuget`) before publish. The pin
   matters: `1.5.0` modelled `Instance.ports` as a string, but kgsm now emits a structured array,
   so an old pin throws on the detailed instance-list JSON and leaves `servers` permanently `[]`.
@@ -132,11 +135,24 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
   with the engine as sole writer and no reservation of any kind. The journal is why a monitor
   that was down catches up instead of losing what it missed; the resync floor remains the
   watch-list's source of truth regardless.
+- **`events.db` is a derived index, not the audit record.** The record is the engine's journal;
+  this database is what makes it queryable ("last 50 events for this instance, paged"), and
+  `POST /events/rebuild` reconstructs it from the journal. That rebuild is **additive** — it never
+  clears the table, never moves the live cursor, never erases a recorded gap. Each of those is a
+  correctness property, not a convenience: the journal is pruned on age while the index is not, so
+  a clear-then-replay would destroy rows whose segments are already gone, and clearing a gap would
+  turn an honest "incomplete before here" into a fabricated claim of coverage.
+- **Journal retention must stay ≥ index retention** (`event_journal_retention_days` in kgsm's
+  config vs `KGSM_MONITOR_EVENT_RETENTION_DAYS`, 90d vs 30d as shipped). The wrong way round, the
+  index keeps serving rows whose segments have been pruned — correct right up until something
+  rebuilds, at which point history silently shortens. `EventPersistService` reads both at startup
+  and logs an error naming the two numbers; it deliberately **reports and does not correct**, since
+  retention is the engine's config and a leaf rewriting it would invert that ownership.
 - **The journal cursor lives in `events.db`, not in a file beside it** (`EventJournalCursorStore`
   overrides the library default). The position and the index built from it must not be able to
   disagree. Delivery is at-least-once, which is safe only because `AppendAsync` is idempotent on
   the deterministic `AuditId` — **do not weaken that**, or a replay after a crash starts
-  duplicating history.
+  duplicating history, and the rebuild command stops being safe to run on a live daemon.
 - **Config file is `kgsm-monitor.settings.json`, not `appsettings.json`**, loaded explicitly
   from `AppContext.BaseDirectory` in `Program.cs` (the slim builder under systemd has no working
   dir, so default discovery finds nothing). It's logging-only; the monitor's own knobs are env vars.

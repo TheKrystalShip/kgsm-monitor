@@ -7,14 +7,27 @@ using TheKrystalShip.KGSM.Events;
 namespace TheKrystalShip.KGSM.Monitor.History;
 
 /// <summary>
-/// The engine event-history store — the monitor is the single source of truth for KGSM engine
-/// events (<c>docs/event-history-plan.md</c>). Raw <c>Microsoft.Data.Sqlite</c> (ADO, hand-written
-/// SQL; EF Core is not AOT-safe), mirroring <see cref="HistoryStore"/>'s shape but in its own file
-/// (<c>events.db</c>, own WAL, own single-writer gate) — engine events are higher-rate and discrete,
-/// not sampled series, so they get no rollup tier and don't contend with the 15s metrics flusher.
-/// One table (<c>event</c>), unix-ms <c>ts</c>, deterministic content id
-/// (<see cref="AuditId.ForEvent"/>) as the primary key so a redelivered event can't double-insert
-/// (<c>INSERT OR IGNORE</c>). WAL + INCREMENTAL auto-vacuum (auto-vacuum set before the table exists).
+/// The queryable <b>index</b> over KGSM engine events. The <em>record</em> is the engine's append-only
+/// journal (<c>/var/lib/kgsm/events/YYYY-MM-DD.ndjson</c>); this database is derived from it and can be
+/// rebuilt from it (<see cref="EventIndexRebuilder"/>) — it exists because NDJSON cannot answer
+/// "the last 50 events for this instance, paged" in bounded time, not because it holds anything the
+/// journal does not. What the monitor owns is therefore the index and the query surface, not the
+/// authority for what happened.
+/// <para>
+/// One consequence is load-bearing: the index is only as complete as the journal it was built from,
+/// and the journal is pruned on age alone. Journal retention must stay <b>≥</b>
+/// <see cref="MonitorOptions.EventRetentionDays"/>, or a rebuild silently yields less than the index
+/// already held — checked and reported at startup by <see cref="EventPersistService"/>.
+/// </para>
+/// <para>
+/// Raw <c>Microsoft.Data.Sqlite</c> (ADO, hand-written SQL; EF Core is not AOT-safe), mirroring
+/// <see cref="HistoryStore"/>'s shape but in its own file (<c>events.db</c>, own WAL, own
+/// single-writer gate) — engine events are discrete, not sampled series, so they get no rollup tier
+/// and don't contend with the 15s metrics flusher. One table (<c>event</c>), unix-ms <c>ts</c>,
+/// deterministic content id (<see cref="AuditId.ForEvent"/>) as the primary key so a redelivered
+/// event can't double-insert (<c>INSERT OR IGNORE</c>) — which is also what makes a rebuild safe to
+/// run against a live index. WAL + INCREMENTAL auto-vacuum (auto-vacuum set before the table exists).
+/// </para>
 /// </summary>
 public sealed class EventHistoryStore : IDisposable
 {
@@ -106,13 +119,19 @@ public sealed class EventHistoryStore : IDisposable
     /// <summary>
     /// Persist one engine event envelope. Idempotent: the id (<see cref="AuditId.ForEvent"/>) is the
     /// primary key and the insert is <c>INSERT OR IGNORE</c>, so a redelivered/duplicate envelope
-    /// (best-effort socket, monitor restart mid-flight) never double-inserts. <c>ts</c> comes from the
-    /// envelope's own <see cref="EventWrapper.Timestamp"/>; a pre-enrichment KGSM that supplies none
-    /// falls back to receipt time, logged (never silently substituted). <c>instance</c>/<c>actor</c>/
-    /// <c>origin</c>/<c>hostname</c>/<c>data</c> are stored as SQL <c>NULL</c> when the envelope
-    /// carries none — never fabricated.
+    /// (at-least-once journal delivery, a monitor restart mid-flight, or a full
+    /// <see cref="EventIndexRebuilder">rebuild</see> replaying events the index already holds) never
+    /// double-inserts. <c>ts</c> comes from the envelope's own <see cref="EventWrapper.Timestamp"/>; a
+    /// pre-enrichment KGSM that supplies none falls back to receipt time, logged (never silently
+    /// substituted). <c>instance</c>/<c>actor</c>/<c>origin</c>/<c>hostname</c>/<c>data</c> are stored
+    /// as SQL <c>NULL</c> when the envelope carries none — never fabricated.
     /// </summary>
-    public async Task AppendAsync(EventWrapper wrapper, CancellationToken ct = default)
+    /// <returns>
+    /// <see langword="true"/> when the row was newly inserted, <see langword="false"/> when an event
+    /// with this id was already present. The rebuilder reports the two separately so an operator can
+    /// see what the index was actually missing rather than a count that says only "events replayed".
+    /// </returns>
+    public async Task<bool> AppendAsync(EventWrapper wrapper, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(wrapper);
 
@@ -160,6 +179,7 @@ public sealed class EventHistoryStore : IDisposable
             int rows = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             if (rows == 0)
                 _logger.LogDebug("event history: duplicate id {Id} ignored ({EventType})", id, wrapper.EventType);
+            return rows > 0;
         }
         finally { _gate.Release(); }
     }
