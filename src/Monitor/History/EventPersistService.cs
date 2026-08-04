@@ -26,7 +26,7 @@ namespace TheKrystalShip.KGSM.Monitor.History;
 /// <c>IEnumerable&lt;IHostedService&gt;</c>) before calling <c>StartAsync</c> on any of them. So this
 /// constructor runs, and the raw handler is registered, strictly before
 /// <see cref="Sampling.ServerSampler"/>'s <c>ExecuteAsync</c> can run — and it is that method, not
-/// this one, that owns the single <see cref="IEventService.Initialize"/> call that starts the
+/// this one, that owns the single <see cref="IEventService.Initialize()"/> call that starts the
 /// journal read loop. This service only ever registers a handler on the shared singleton.
 /// </remarks>
 public sealed class EventPersistService : BackgroundService

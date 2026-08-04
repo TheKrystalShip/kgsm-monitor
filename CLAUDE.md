@@ -70,9 +70,18 @@ per-server network meter has its own one-time `deploy/net-meter-setup.sh`.
 `deploy.sh` also installs **`deploy/kgsm-monitor.leaf.json`** — the leaf config descriptor — into
 `/var/lib/kgsm/leaves/monitor.json`, unprivileged, before the binary swap. It declares every
 `Monitor__*` knob so the Control Panel can render and edit them; the daemon never reads it.
-`LeafDescriptorTests` fails the build if the descriptor, the settings file and `MonitorSettings`
-disagree in any direction, so **adding a config knob means adding it in all three places**. Format
-and rules: `tks/leaf-config-descriptor.md`.
+
+**That file is generated, not written.** `tools/LeafDescriptorGen` reads the `[LeafField]`
+attributes and `<panel>` doc tags off `MonitorSettings` in the built assembly and rewrites it on
+every build of `Monitor.csproj` — so **edit the settings class, not the JSON**, and commit what the
+build produces. The generator also validates: a settings key no field describes, a described key the
+settings file does not declare, an undocumented field, a bad group or `dependsOn` reference all fail
+the build naming the key. Format and rules: `tks/leaf-config-descriptor.md`.
+
+It reads the assembly through `MetadataLoadContext` in its own process — metadata only, nothing
+loaded for execution — so **describing the daemon costs it no reflection and no dependency**. The
+attributes are compiled in from `src/LeafConfig/` as source rather than referenced as a package;
+ILC drops them, and the AOT publish stays at zero warnings.
 
 ## Architecture
 
@@ -116,10 +125,11 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
   the config-binding source generator (on by default under `PublishAot`, so `Get<T>()` costs no
   reflection); JSON goes through the source-generated `MonitorJsonContext`. A new serialized type
   must be registered there or it throws at runtime — the AOT publish (above) is how you catch it.
-- **A knob lives in three places and `LeafDescriptorTests` pins all of them**: a `MonitorSettings`
-  property, a key in `kgsm-monitor.settings.json`, and a descriptor entry. Miss any one and the
-  build fails naming which — a property with no key has an invisible default, a key with no
-  property binds to nothing, and either without a descriptor entry is invisible to the panel.
+- **A knob lives in two places**: a `MonitorSettings` property carrying `[LeafField]` and a
+  `<panel>` doc tag, and a key in `kgsm-monitor.settings.json`. The descriptor is generated from the
+  first and the defaults from the second, so there is no third place to keep in step. Miss either
+  and the build fails naming the key — a property with no key has an invisible default, a key with
+  no property binds to nothing.
 - **`null` ≠ `0` is a hard wire contract** (the ecosystem never-fabricate rule, concretely).
   `null` means "not measured": io without `IOAccounting=yes`, `diskBytes` before the first walk,
   `rxBps`/`txBps` when un-metered or the cgroup is outside `kgsm.slice`. Never substitute 0.

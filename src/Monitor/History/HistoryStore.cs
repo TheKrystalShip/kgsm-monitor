@@ -110,7 +110,7 @@ public sealed class HistoryStore : IDisposable
     }
 
     /// <summary>Roll up complete Tier-1 buckets into Tier-2. Only fully-closed buckets
-    /// (bucket_start + step &le; now) are processed — the current open bucket is never touched.
+    /// (bucket_start + step ≤ now) are processed — the current open bucket is never touched.
     /// Idempotent (INSERT OR REPLACE).</summary>
     public async Task RollupAsync(int stepMinutes, long nowMs, CancellationToken ct = default)
     {
@@ -182,7 +182,7 @@ public sealed class HistoryStore : IDisposable
 
     /// <summary>
     /// Read a history window for an entity and shape it into the response DTO. Tier is chosen by
-    /// range: range &le; raw retention → raw (sample), else → rollup. Series are sparse (a metric with
+    /// range: range ≤ raw retention → raw (sample), else → rollup. Series are sparse (a metric with
     /// no rows in the window is simply absent). An unreadable/empty store yields empty series, never a
     /// fabricated curve.
     /// </summary>

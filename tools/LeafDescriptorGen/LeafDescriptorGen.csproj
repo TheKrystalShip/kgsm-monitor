@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TheKrystalShip.KGSM.LeafConfig.Gen</RootNamespace>
+    <AssemblyName>leafdescgen</AssemblyName>
+
+    <!-- A build-time tool: it is never installed, never packed, and never referenced by a leaf.
+         That separation is the point — it reads leaf metadata in its own process, so an AOT leaf
+         gains no reflection and no dependency from being described. -->
+    <IsPublishable>false</IsPublishable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Reads the leaf assembly as *metadata only* — types are never loaded for execution, so the
+         tool cannot run leaf code, and it works against an assembly built for any runtime. -->
+    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>

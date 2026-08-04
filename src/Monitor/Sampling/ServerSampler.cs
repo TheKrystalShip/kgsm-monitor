@@ -19,14 +19,14 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// <see cref="Sample"/> once per tick; it reads the current list reference and reads each
 /// server's counters from cheap kernel files — cgroup files for systemd/container servers
 /// (<see cref="CgroupSampler"/>) and the <c>/proc</c> process tree for native-standalone
-/// servers (<see cref="ProcTreeSampler"/>, Slice 3). No process spawn, no lock.</item>
+/// servers (<see cref="ProcTreeSampler"/>). No process spawn, no lock.</item>
 /// </list>
 /// </para>
 /// <para>
-/// <b>Slice 2b — event-driven delta (the "watch" half of list+watch):</b> KGSM lifecycle
-/// events (<c>instance_started/stopped/removed/uninstalled</c>) arrive on the
-/// monitor-owned <see cref="MonitorOptions.KgsmSocketPath"/> socket (KGSM connects via
-/// <c>socat</c>). Each event simply <em>nudges</em> an immediate resync rather than
+/// <b>Event-driven delta (the "watch" half of list+watch):</b> KGSM lifecycle
+/// events (<c>instance_started/stopped/removed/uninstalled</c>) are read from the engine's
+/// append-only journal at <see cref="MonitorOptions.KgsmJournalDir"/>, which the engine
+/// is the sole writer of. Each event simply <em>nudges</em> an immediate resync rather than
 /// mutating the list directly: the event payload carries only the instance name, not the
 /// cgroup-resolution inputs (compose-file / pid-file / systemd unit), so a partial "add"
 /// would need a lookup anyway — re-listing via the proven <see cref="IInstanceService.GetAll"/>

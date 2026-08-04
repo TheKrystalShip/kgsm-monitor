@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the leaf config descriptor is generated from the settings type
+- **`deploy/kgsm-monitor.leaf.json` is written by `tools/LeafDescriptorGen` on every build**, from
+  `[LeafField]` attributes and `<panel>` doc tags on `MonitorSettings`. A knob now lives in two
+  places — the property and the settings-file key — instead of three, and the descriptor cannot
+  describe a variable the daemon does not read: the `env` name is derived from the property's
+  position under its bound section, and the default from the settings file itself.
+- **A field's operator-facing prose comes from a `<panel>` tag**, falling back to `<summary>` with a
+  build message naming the field. The two are separate because they answer different questions: the
+  summary tells a developer what the value means to the code, the panel tells whoever runs the host
+  what changing it does.
+- **The generator validates and fails the build**: a settings key no field describes, a described key
+  the settings file does not declare, a field with no description, an unknown group or `dependsOn`,
+  an enum with no values or a default outside them, bounds on a non-numeric field, a floor-source
+  order that does not put the settings file first. `LeafDescriptorTests` is gone — every check it
+  made now runs at the point the file is produced, one build step earlier.
+- **The cadence floors are declared once.** `MonitorSettings.Floors` is read by both
+  `MonitorOptions.FromSettings`, which raises anything lower, and the descriptor's `min`, which is
+  what the Control Panel rejects against — so the panel can no longer accept a value the daemon
+  would silently move.
+- The attributes are compiled in as source (`src/LeafConfig/`) and read back out of the assembly's
+  metadata by a separate process, so the daemon gains no reflection and no dependency. The AOT
+  publish stays at zero ILC warnings and the descriptor prose is absent from the native binary.
+
+### Fixed
+- **Six malformed XML doc comments**, surfaced by turning the documentation file on: an unclosed
+  `<para>` in `ServerCgroupResolver`, three `&le;` undefined entities in the history store and DTO,
+  and an ambiguous `IEventService.Initialize` cref. Each one dropped its member from the generated
+  documentation.
+- **`ServerSampler`'s event-delta comment described a socket the monitor no longer opens** (KGSM
+  connecting via `socat`) and referenced a `MonitorOptions.KgsmSocketPath` that does not exist.
+  Engine events are read from the journal directory.
+
 ### Changed
 - **`pairedApiKey` names the Control Panel API's renamed setting.** kgsm-api's environment
   variables are now spelled `Api__<Property>`, and this value is what the API resolves to warn that

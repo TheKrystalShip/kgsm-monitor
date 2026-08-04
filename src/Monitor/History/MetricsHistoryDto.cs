@@ -4,7 +4,7 @@ namespace TheKrystalShip.KGSM.Monitor.History;
 /// The history response shape served from <c>GET /metrics/history</c>. Daemon-local (the
 /// monitor owns the metrics-history contract now); kgsm-api relays this JSON verbatim to the SPA,
 /// so the shape is preserved end-to-end without a shared-contract package. Tier selection is
-/// automatic by range: range &le; raw retention → raw (sample table, ~15s step); range &gt; raw
+/// automatic by range: range ≤ raw retention → raw (sample table, ~15s step); range &gt; raw
 /// retention → rollup (rollup table, 5min step). Gaps are absent points (sparse series, no
 /// carry-forward).
 /// </summary>

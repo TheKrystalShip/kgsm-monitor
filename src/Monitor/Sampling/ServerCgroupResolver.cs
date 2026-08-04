@@ -12,13 +12,14 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// spawns: a <em>stopped</em> container, an <em>unmatched container path</em>
 /// (short-vs-full id, or the <c>cgroupfs</c> driver instead of <c>systemd</c>), and
 /// a <em>native</em> server whose cgroup has not been created yet.
+/// </para>
 /// <para>
 /// A <em>native</em> server is cgroup-addressable when KGSM supplies its per-instance
 /// cgroup directory via <see cref="Instance.CgroupPath"/> (<c>kgsm.slice/&lt;inst&gt;</c>,
 /// the path kgsm-watchdog creates) — <see cref="CgroupSampler"/> then samples it directly.
 /// A native server with an empty <see cref="Instance.CgroupPath"/> (cgroups disabled, or a
-/// KGSM too old to emit the field) stays unaddressable and is deferred to Slice 3's
-/// process-tree sampler. Its <see cref="Target.Kind"/> remains <c>"native"</c> in both cases.
+/// KGSM too old to emit the field) stays unaddressable and is handled by the process-tree
+/// sampler. Its <see cref="Target.Kind"/> remains <c>"native"</c> in both cases.
 /// </para>
 /// </summary>
 internal static class ServerCgroupResolver
