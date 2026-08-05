@@ -53,6 +53,8 @@ public sealed class MetricsPersistService : BackgroundService
                     MapHostMetrics(rows, _options.HostId, snap, snap.Ts);
                     foreach (ServerMetrics sm in snap.Servers)
                         MapServerMetrics(rows, sm, snap.Ts);
+                    foreach (LeafMetrics lm in snap.Leaves)
+                        MapLeafMetrics(rows, lm, snap.Ts);
 
                     if (rows.Count > 0)
                     {
@@ -86,6 +88,25 @@ public sealed class MetricsPersistService : BackgroundService
             rows.Add(new HistoryRow("server", sm.Id, "rxBps", ts, rx));
         if (sm.TxBps is { } tx)
             rows.Add(new HistoryRow("server", sm.Id, "txBps", ts, tx));
+    }
+
+    /// <summary>
+    /// One leaf's row set, under the <c>leaf</c> entity kind and keyed by the leaf id — the same identity
+    /// kgsm-api and the Control Panel address it by, so a history query needs no translation table. The
+    /// metric names are deliberately the <em>server</em> vocabulary (<c>cpuPctCore</c>, <c>memBytes</c>, …):
+    /// they are the same quantities in the same units, and sharing the names is what lets one chart
+    /// component render either without knowing which it was given. A leaf that isn't running produces no
+    /// rows at all rather than a flat zero line.
+    /// </summary>
+    internal static void MapLeafMetrics(List<HistoryRow> rows, LeafMetrics lm, long ts)
+    {
+        rows.Add(new HistoryRow("leaf", lm.Id, "cpuPctCore", ts, Math.Round(lm.CpuPctCore, 1)));
+        rows.Add(new HistoryRow("leaf", lm.Id, "memBytes", ts, lm.MemBytes));
+        if (lm.IoReadBps is { } ioR)
+            rows.Add(new HistoryRow("leaf", lm.Id, "ioReadBps", ts, ioR));
+        if (lm.IoWriteBps is { } ioW)
+            rows.Add(new HistoryRow("leaf", lm.Id, "ioWriteBps", ts, ioW));
+        rows.Add(new HistoryRow("leaf", lm.Id, "pids", ts, lm.Pids));
     }
 
     internal static void MapHostMetrics(List<HistoryRow> rows, string hostId, Snapshot s, long ts)

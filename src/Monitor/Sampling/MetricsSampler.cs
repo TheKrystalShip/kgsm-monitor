@@ -13,7 +13,8 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 public sealed class MetricsSampler(
     ILogger<MetricsSampler> logger,
     MonitorOptions options,
-    ServerSampler? servers = null) : BackgroundService
+    ServerSampler? servers = null,
+    LeafSampler? leaves = null) : BackgroundService
 {
     private readonly int _intervalMs = options.IntervalMs;
 
@@ -29,6 +30,11 @@ public sealed class MetricsSampler(
     // Per-server cgroup sampler — null when KGSM integration is unconfigured (the
     // monitor then runs host-only and the servers array is always empty).
     private readonly ServerSampler? _servers = servers;
+
+    // Per-leaf cgroup sampler — null when leaf sampling is turned off (the leaves array is then always
+    // empty). Independent of the server sampler above: it needs no KGSM, so a host with no game servers
+    // still reports on the daemons running there.
+    private readonly LeafSampler? _leaves = leaves;
 
     private volatile Snapshot? _latest;
 
@@ -81,6 +87,7 @@ public sealed class MetricsSampler(
             Disk: disk,
             Net: net,
             Sensors: _sensors.Sample(),
-            Servers: _servers?.Sample() ?? []);
+            Servers: _servers?.Sample() ?? [],
+            Leaves: _leaves?.Sample() ?? []);
     }
 }

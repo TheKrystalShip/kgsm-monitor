@@ -42,14 +42,19 @@
       "order": 4
     },
     {
+      "id": "leaves",
+      "label": "Per-leaf metrics",
+      "order": 5
+    },
+    {
       "id": "history",
       "label": "Metrics history",
-      "order": 5
+      "order": 6
     },
     {
       "id": "events",
       "label": "Event history",
-      "order": 6
+      "order": 7
     }
   ],
   "fields": [
@@ -191,6 +196,52 @@
       "default": "/var/lib/kgsm/events",
       "risk": "wiring",
       "dependsOn": "kgsmPath"
+    },
+    {
+      "key": "leafMetricsDisabled",
+      "env": "Monitor__LeafMetricsDisabled",
+      "label": "Disable leaf metrics",
+      "description": "Turn off resource sampling of the KGSM leaves themselves. The Control Panel's per-leaf resource charts then have no data to draw; host and game-server metrics are unaffected.",
+      "group": "leaves",
+      "type": "bool",
+      "default": "false",
+      "risk": "safe"
+    },
+    {
+      "key": "leafDescriptorDir",
+      "env": "Monitor__LeafDescriptorDir",
+      "label": "Leaf descriptor directory",
+      "description": "Directory the monitor reads to learn which leaves exist. Every leaf installs its config descriptor here on deploy, so a leaf added later is measured with no change to this daemon.",
+      "group": "leaves",
+      "type": "path",
+      "default": "/var/lib/kgsm/leaves",
+      "risk": "wiring",
+      "pairedApiKey": "Api__LeafDescriptorDir",
+      "dependsOn": "leafMetricsDisabled"
+    },
+    {
+      "key": "leafResolveMs",
+      "env": "Monitor__LeafResolveMs",
+      "label": "Leaf resolve interval",
+      "description": "How often the monitor re-checks which leaves are running. This spawns a process, so it runs well off the metrics tick — a leaf that restarts is picked up immediately regardless.",
+      "group": "leaves",
+      "type": "int",
+      "default": "30000",
+      "min": 1000,
+      "unit": "ms",
+      "risk": "safe",
+      "dependsOn": "leafMetricsDisabled"
+    },
+    {
+      "key": "systemctlPath",
+      "env": "Monitor__SystemctlPath",
+      "label": "systemctl binary",
+      "description": "The systemctl binary used to look up each leaf's main process. Set an absolute path where PATH can't be relied on.",
+      "group": "leaves",
+      "type": "path",
+      "default": "systemctl",
+      "risk": "safe",
+      "dependsOn": "leafMetricsDisabled"
     },
     {
       "key": "historyDisabled",

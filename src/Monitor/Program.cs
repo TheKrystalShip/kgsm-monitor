@@ -65,6 +65,15 @@ if (options.KgsmEnabled)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerSampler>());
 }
 
+// Per-leaf sampling, independent of everything above: the ecosystem's own daemons are systemd units
+// with cgroups, which needs no KGSM, no privilege and no other leaf. The watch-list comes from the
+// shared descriptor directory, so a leaf deployed later is measured with nothing rebuilt here.
+if (options.LeafMetricsEnabled)
+{
+    builder.Services.AddSingleton<LeafSampler>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<LeafSampler>());
+}
+
 // The sampler is one singleton that is also the hosted background service, so the
 // /metrics endpoint reads the exact instance that is ticking.
 builder.Services.AddSingleton<MetricsSampler>();
@@ -158,7 +167,15 @@ if (options.HistoryEnabled)
 {
     app.MapGet("/metrics/history", async (HistoryStore store, string? kind, string? id, string? range, CancellationToken ct) =>
     {
-        string entityKind = kind == "host" ? "host" : "server";
+        // An unrecognised kind falls to "server" rather than 400-ing, which is what the endpoint has always
+        // done: the entity kinds are a closed set the api passes verbatim, and an unknown one simply
+        // matches no rows. Naming one explicitly is the only way to read its rows.
+        string entityKind = kind switch
+        {
+            "host" => "host",
+            "leaf" => "leaf",
+            _ => "server",
+        };
         if (string.IsNullOrEmpty(id))
             return Results.BadRequest();
         MetricsHistoryResponse resp = await store.QueryHistoryAsync(entityKind, id, range, ct);

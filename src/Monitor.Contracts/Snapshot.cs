@@ -16,7 +16,8 @@ public sealed record Snapshot(
     DiskMetrics Disk,
     NetworkMetrics Net,
     SensorReading[] Sensors,  // hwmon temperatures (empty when none/absent — never invented)
-    ServerMetrics[] Servers); // per-KGSM-server cgroup metrics (empty when none running)
+    ServerMetrics[] Servers,  // per-KGSM-server cgroup metrics (empty when none running)
+    LeafMetrics[] Leaves);    // per-KGSM-leaf cgroup metrics (empty when off/none running)
 
 public sealed record CpuMetrics(double TotalPct, double[] PerCore, LoadAvg Load, CpuInfo? Info);
 
@@ -150,3 +151,43 @@ public sealed record ServerMetrics(
     long? DiskBytes,
     long? RxBps,
     long? TxBps);
+
+/// <summary>
+/// Per-KGSM-leaf resource usage, read from the cgroup v2 counters of the systemd unit each leaf runs as.
+/// The array holds only leaves that are <em>running and resolvable</em>: a socket-activated leaf sitting
+/// idle has no cgroup and is simply absent, never a row of zeros.
+/// <para>
+/// <b>The cgroup sampled is the one the leaf's main process lives in, not its unit's.</b> cgroup v2
+/// counters are recursive, so a leaf that supervises other workloads in child cgroups would otherwise
+/// report theirs as its own — <c>kgsm-watchdog</c> runs itself in a <c>supervisor</c> child of its unit
+/// cgroup and spawns each game server into a sibling, and its unit-level memory is dominated by the
+/// servers. Descendants of the resolved cgroup are still counted, which is the boundary that matters:
+/// work a leaf forks into sub-cgroups is its own, work supervised beside it is not. For every leaf whose
+/// main process sits directly in its unit cgroup this is identical to the unit-level figure.
+/// </para>
+/// <para>
+/// <b>No network and no disk footprint here, deliberately.</b> The eBPF <c>cgroup/skb</c> meter is
+/// attached to <c>kgsm.slice</c>, so it never sees a leaf in <c>system.slice</c>; and a leaf's on-disk
+/// size is its install prefix, which is static and not worth a recurring walk. Absent beats invented.
+/// </para>
+/// </summary>
+/// <param name="Id">The leaf id from its config descriptor (<c>monitor</c>, <c>watchdog</c>, …) — the same
+/// identity kgsm-api and the Control Panel address it by.</param>
+/// <param name="Unit">The systemd unit the leaf runs as, carried so a consumer can name what was measured
+/// without re-deriving it.</param>
+/// <param name="CpuPctCore">CPU as a percentage of <em>one</em> core, the same unit and htop convention as
+/// <see cref="ServerMetrics.CpuPctCore"/> — a multi-threaded leaf can exceed 100.</param>
+/// <param name="MemBytes"><c>memory.current</c> for the resolved cgroup. Includes reclaimable page cache
+/// like every cgroup memory figure, so it sits above the process's RSS.</param>
+/// <param name="IoReadBps">Block-IO read rate (bytes/sec), or <c>null</c> when <c>io.stat</c> is absent
+/// (the io controller isn't accounted for this cgroup) — never a fabricated 0.</param>
+/// <param name="IoWriteBps">Block-IO write rate, or null (see <paramref name="IoReadBps"/>).</param>
+/// <param name="Pids">Live process/thread count (<c>pids.current</c>).</param>
+public sealed record LeafMetrics(
+    string Id,
+    string Unit,
+    double CpuPctCore,
+    long MemBytes,
+    long? IoReadBps,
+    long? IoWriteBps,
+    int Pids);

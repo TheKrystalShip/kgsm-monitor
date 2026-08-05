@@ -17,8 +17,9 @@ using TheKrystalShip.KGSM.LeafConfig;
 [assembly: LeafGroup("sampling", "Sampling", 2)]
 [assembly: LeafGroup("sockets", "Sockets", 3)]
 [assembly: LeafGroup("servers", "Per-server metrics", 4)]
-[assembly: LeafGroup("history", "Metrics history", 5)]
-[assembly: LeafGroup("events", "Event history", 6)]
+[assembly: LeafGroup("leaves", "Per-leaf metrics", 5)]
+[assembly: LeafGroup("history", "Metrics history", 6)]
+[assembly: LeafGroup("events", "Event history", 7)]
 
 // Where this daemon's own configuration comes from, lowest precedence first — the same order
 // Program.cs resolves them in. The settings file is the base the other two override one key of.

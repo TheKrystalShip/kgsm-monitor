@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — per-leaf resource metrics (Contracts 1.4.0)
+
+`Snapshot.leaves` carries one `LeafMetrics` per running KGSM leaf — `cpuPctCore`, `memBytes`,
+nullable `ioReadBps`/`ioWriteBps`, `pids` — from a new `LeafSampler`, so the ecosystem's own daemons
+are measured the same way the game servers are. Persisted under the `leaf` entity kind, which the
+history store's `(entity_kind, entity_id, metric, ts)` schema already carried, and served by
+`GET /metrics/history?kind=leaf&id=<leafId>`; the metric names are deliberately the server
+vocabulary, so one chart renders either.
+
+- **The watch-list is the shared descriptor directory** (`Monitor__LeafDescriptorDir`, default
+  `/var/lib/kgsm/leaves`), the same files kgsm-api scans — each declares one leaf's id and unit. A
+  leaf that joins the ecosystem later is measured with nothing rebuilt here; one never deployed on
+  this host is simply absent. Parsed with `JsonDocument`, so it costs the AOT publish nothing.
+- **The cgroup sampled is the one the leaf's main process lives in, not its unit's.** cgroup v2
+  counters are recursive, so sampling the unit cgroup charges a supervisor for everything it
+  supervises: `kgsm-watchdog` runs itself in a `supervisor` child and spawns each game server into a
+  sibling, and its unit cgroup reads ~8.2 GB against the daemon's ~103 MB. Resolution goes
+  `systemctl show --property=Id,MainPID` → `/proc/<pid>/cgroup`, on a slow cadence
+  (`Monitor__LeafResolveMs`, default 30s) off the metrics tick — the one process spawn here, mirroring
+  the instance resync. A cgroup that vanishes mid-window nudges an immediate re-resolve, so a leaf
+  that restarts is picked up without waiting out the period.
+- **Independent of KGSM and of every other leaf**: no privilege (`systemctl show` is an unprivileged
+  read, the kernel files are world-readable), no engine, no sibling. A host running leaves but no game
+  servers still gets this. Off via `Monitor__LeafMetricsDisabled`.
+- **No network and no disk footprint per leaf, deliberately.** The eBPF `cgroup/skb` meter is attached
+  to `kgsm.slice` and never sees a leaf in `system.slice`; a leaf's on-disk size is its install prefix,
+  static and not worth a recurring walk. A leaf that is not running produces no row at all rather than
+  a zero — a socket-activated one sitting idle is absent, not idle-at-zero.
+
 ### Added — the leaf config descriptor is generated from the settings type
 - **`deploy/kgsm-monitor.leaf.json` is written by `TheKrystalShip.KGSM.LeafConfig` on every build**, from
   `[LeafField]` attributes and `<panel>` doc tags on `MonitorSettings`. A knob now lives in two

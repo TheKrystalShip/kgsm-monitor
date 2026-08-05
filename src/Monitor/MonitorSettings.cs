@@ -49,6 +49,7 @@ public sealed class MonitorSettings
         public const int IntervalMs = 100;
         public const int ServerResyncMs = 1000;
         public const int DiskUsageMs = 5000;
+        public const int LeafResolveMs = 1000;
         public const int PersistMs = 1000;
         public const int MaintenanceMs = 1000;
 
@@ -140,6 +141,39 @@ public sealed class MonitorSettings
     [LeafField("kgsmJournalDir", "Engine event journal", Group = "servers", Type = LeafType.Path,
         Risk = LeafRisk.Wiring, DependsOn = "kgsmPath")]
     public string KgsmJournalDir { get; set; } = "/var/lib/kgsm/events";
+
+    /// <summary>Turns off sampling of the ecosystem's own leaf daemons, leaving the frame's leaf array
+    /// empty. On by default: it needs no privilege, no KGSM and no other leaf.</summary>
+    /// <panel>Turn off resource sampling of the KGSM leaves themselves. The Control Panel's per-leaf
+    /// resource charts then have no data to draw; host and game-server metrics are unaffected.</panel>
+    [LeafField("leafMetricsDisabled", "Disable leaf metrics", Group = "leaves")]
+    public bool? LeafMetricsDisabled { get; set; }
+
+    /// <summary>Directory holding the leaf config descriptors, which is where the leaf watch-list comes
+    /// from — each declares one leaf's id and unit. Read-only and shared: every leaf's deploy installs its
+    /// own file here and kgsm-api scans the same directory.</summary>
+    /// <panel>Directory the monitor reads to learn which leaves exist. Every leaf installs its config
+    /// descriptor here on deploy, so a leaf added later is measured with no change to this daemon.</panel>
+    [LeafField("leafDescriptorDir", "Leaf descriptor directory", Group = "leaves", Type = LeafType.Path,
+        Risk = LeafRisk.Wiring, PairedApiKey = "Api__LeafDescriptorDir", DependsOn = "leafMetricsDisabled")]
+    public string LeafDescriptorDir { get; set; } = "/var/lib/kgsm/leaves";
+
+    /// <summary>How often to re-resolve which leaves are running and which cgroup each one's main process
+    /// lives in, ms. Floor 1000. This spawns systemctl, so it stays off the metrics tick; a cgroup that
+    /// disappears also nudges an immediate re-resolve.</summary>
+    /// <panel>How often the monitor re-checks which leaves are running. This spawns a process, so it runs
+    /// well off the metrics tick — a leaf that restarts is picked up immediately regardless.</panel>
+    [LeafField("leafResolveMs", "Leaf resolve interval", Group = "leaves",
+        Min = Floors.LeafResolveMs, Unit = "ms", DependsOn = "leafMetricsDisabled")]
+    public int? LeafResolveMs { get; set; }
+
+    /// <summary>The <c>systemctl</c> binary used to read each leaf unit's main pid — the one thing about a
+    /// leaf only the service manager knows. Resolved via <c>PATH</c> by default.</summary>
+    /// <panel>The systemctl binary used to look up each leaf's main process. Set an absolute path where
+    /// PATH can't be relied on.</panel>
+    [LeafField("systemctlPath", "systemctl binary", Group = "leaves", Type = LeafType.Path,
+        DependsOn = "leafMetricsDisabled")]
+    public string SystemctlPath { get; set; } = "systemctl";
 
     /// <summary>Identity this host persists its <c>host</c>-kind metrics under. Empty (the default)
     /// resolves to the machine name — the same default kgsm-api uses for its own host id, so the

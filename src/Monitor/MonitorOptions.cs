@@ -90,6 +90,37 @@ public sealed class MonitorOptions
     public int DiskUsageMs { get; init; } = 60_000;
 
     /// <summary>
+    /// Whether the monitor samples the ecosystem's own leaf daemons alongside the game servers. On by
+    /// default: it needs no privilege, no KGSM and no other leaf, so there is nothing to opt into.
+    /// </summary>
+    public bool LeafMetricsEnabled { get; init; } = true;
+
+    /// <summary>
+    /// Directory holding the leaf config descriptors, which is where the leaf watch-list comes from: each
+    /// declares the id and unit of one leaf. Read-only and shared — every leaf's deploy installs its own
+    /// file here and kgsm-api scans the same directory, so nothing in it is owned by or reserved for the
+    /// monitor. Scanning rather than holding a list is what lets a leaf added later be measured with no
+    /// rebuild of this daemon.
+    /// </summary>
+    public string LeafDescriptorDir { get; init; } = "/var/lib/kgsm/leaves";
+
+    /// <summary>
+    /// How often to re-resolve which leaves are running and which cgroup each one's main process lives in,
+    /// in milliseconds. Default 30s, floor 1s. This spawns <c>systemctl</c>, so it stays well off the
+    /// metrics tick; a leaf whose cgroup disappears mid-window also nudges an immediate re-resolve, so
+    /// this period is the floor on noticing a leaf that <em>appeared</em>, not a delay on recovering one
+    /// that restarted.
+    /// </summary>
+    public int LeafResolveMs { get; init; } = 30_000;
+
+    /// <summary>
+    /// The <c>systemctl</c> binary used to read each leaf unit's main pid — the one thing about a leaf
+    /// only the service manager knows. Default <c>systemctl</c>, resolved via <c>PATH</c>; set an absolute
+    /// path where PATH can't be relied on. Reading unit state is unprivileged.
+    /// </summary>
+    public string SystemctlPath { get; init; } = "systemctl";
+
+    /// <summary>
     /// Identity this host persists its <c>host</c>-kind metrics under (the <c>entity_id</c> of host
     /// rows). Defaults to the machine name — the same default kgsm-api
     /// uses for its own host id, so the api's history queries (which pass its host id) line up with
@@ -172,6 +203,10 @@ public sealed class MonitorOptions
             ServerResyncMs = Floor(s.ServerResyncMs ?? defaults.ServerResyncMs, MonitorSettings.Floors.ServerResyncMs),
             EventsEnabled = s.EventsEnabled ?? defaults.EventsEnabled,
             DiskUsageMs = Floor(s.DiskUsageMs ?? defaults.DiskUsageMs, MonitorSettings.Floors.DiskUsageMs),
+            LeafMetricsEnabled = !(s.LeafMetricsDisabled ?? !defaults.LeafMetricsEnabled),
+            LeafDescriptorDir = Or(s.LeafDescriptorDir, defaults.LeafDescriptorDir),
+            LeafResolveMs = Floor(s.LeafResolveMs ?? defaults.LeafResolveMs, MonitorSettings.Floors.LeafResolveMs),
+            SystemctlPath = Or(s.SystemctlPath, defaults.SystemctlPath),
             HostId = Or(s.HostId, Environment.MachineName),
             HistoryEnabled = !(s.HistoryDisabled ?? !defaults.HistoryEnabled),
             HistoryDbPath = Or(s.HistoryDbPath, defaults.HistoryDbPath),
