@@ -229,29 +229,4 @@ public sealed class MonitorSettings
     [LeafField("maintenanceMs", "Maintenance interval", Group = "history",
         Min = Floors.MaintenanceMs, Unit = "ms")]
     public int? MaintenanceMs { get; set; }
-
-    /// <summary>Turns off KGSM engine-event history. Independent of <see cref="HistoryDisabled"/>
-    /// (metrics) — either can be toggled without the other.</summary>
-    /// <panel>Turn off persistence of KGSM engine events. Independent of metrics history — either can
-    /// be off without the other. The Control Panel's audit timeline loses its engine-event
-    /// source.</panel>
-    [LeafField("eventHistoryDisabled", "Disable event history", Group = "events", DependsOn = "kgsmPath")]
-    public bool? EventHistoryDisabled { get; set; }
-
-    /// <summary>SQLite file for the event-history store. A separate file from
-    /// <see cref="HistoryDbPath"/> — its own WAL and writer, no contention with the metrics
-    /// flusher.</summary>
-    /// <panel>SQLite file holding engine-event history, kept separate from the metrics store so the two
-    /// never contend for a writer. Repointing it starts empty and orphans the existing history.</panel>
-    [LeafField("eventsDbPath", "Event database", Group = "events", Type = LeafType.Path,
-        Risk = LeafRisk.Destructive)]
-    public string EventsDbPath { get; set; } = "/var/lib/kgsm-monitor/events.db";
-
-    /// <summary>Event-history retention, days. Floor 1. No rollup tier (discrete facts, not a
-    /// sampled series) — rows simply age out at this cutoff.</summary>
-    /// <panel>How long engine events are kept. There is no rollup tier — these are discrete facts, so
-    /// rows simply age out. Lowering it prunes existing rows.</panel>
-    [LeafField("eventRetentionDays", "Event retention", Group = "events", Min = Floors.Retention,
-        Unit = "days", Risk = LeafRisk.Destructive)]
-    public int? EventRetentionDays { get; set; }
 }

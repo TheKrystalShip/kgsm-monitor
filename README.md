@@ -58,9 +58,6 @@ stale override from looking applied.
 | `RollupStepMin` | `Monitor__RollupStepMin` | `5` | Rollup bucket width |
 | `RollupRetentionDays` | `Monitor__RollupRetentionDays` | `30` | Rollup-tier retention |
 | `MaintenanceMs` | `Monitor__MaintenanceMs` | `60000` | Rollup/prune/vacuum cadence (floor 1 s) |
-| `EventHistoryDisabled` | `Monitor__EventHistoryDisabled` | `false` | Turns off the engine-event index |
-| `EventsDbPath` | `Monitor__EventsDbPath` | `/var/lib/kgsm-monitor/events.db` | Event index store |
-| `EventRetentionDays` | `Monitor__EventRetentionDays` | `30` | Event-index retention |
 
 A cadence below its floor is raised to the floor rather than reverting to the default, so a value
 that is too small runs at the nearest legal one instead of silently at something nobody named.

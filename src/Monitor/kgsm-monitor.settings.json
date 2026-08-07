@@ -21,10 +21,7 @@
     "RawRetentionHours": 24,
     "RollupStepMin": 5,
     "RollupRetentionDays": 30,
-    "MaintenanceMs": 60000,
-    "EventHistoryDisabled": false,
-    "EventsDbPath": "/var/lib/kgsm-monitor/events.db",
-    "EventRetentionDays": 30
+    "MaintenanceMs": 60000
   },
   "Logging": {
     "LogLevel": {

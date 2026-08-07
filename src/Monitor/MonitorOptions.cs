@@ -156,21 +156,8 @@ public sealed class MonitorOptions
     /// Default 60s, floor 1s.</summary>
     public int MaintenanceMs { get; init; } = 60_000;
 
-    /// <summary>Whether the monitor persists + serves KGSM engine-event history.
-    /// Independent of
-    /// <see cref="HistoryEnabled"/> (metrics) — either can be toggled without the other. Has no
-    /// effect unless <see cref="KgsmEnabled"/> (event history is derived from the engine's
-    /// journal, which is only read when KGSM is configured).</summary>
-    public bool EventHistoryEnabled { get; init; } = true;
 
-    /// <summary>SQLite file for the event-history store. Defaults
-    /// under the systemd <c>StateDirectory</c> (<c>/var/lib/kgsm-monitor</c>), a separate file from
-    /// <see cref="HistoryDbPath"/> — its own WAL/writer, no contention with the metrics flusher.</summary>
-    public string EventsDbPath { get; init; } = "/var/lib/kgsm-monitor/events.db";
 
-    /// <summary>Event-history retention, days. Default 30.
-    /// No rollup tier (discrete facts, not a sampled series) — rows simply age out at this cutoff.</summary>
-    public int EventRetentionDays { get; init; } = 30;
 
     /// <summary>True when per-server sampling is configured (a KGSM path was provided).</summary>
     public bool KgsmEnabled => KgsmPath.Length > 0;
@@ -215,9 +202,6 @@ public sealed class MonitorOptions
             RollupStepMin = Floor(s.RollupStepMin ?? defaults.RollupStepMin, MonitorSettings.Floors.Retention),
             RollupRetentionDays = Floor(s.RollupRetentionDays ?? defaults.RollupRetentionDays, MonitorSettings.Floors.Retention),
             MaintenanceMs = Floor(s.MaintenanceMs ?? defaults.MaintenanceMs, MonitorSettings.Floors.MaintenanceMs),
-            EventHistoryEnabled = !(s.EventHistoryDisabled ?? !defaults.EventHistoryEnabled),
-            EventsDbPath = Or(s.EventsDbPath, defaults.EventsDbPath),
-            EventRetentionDays = Floor(s.EventRetentionDays ?? defaults.EventRetentionDays, MonitorSettings.Floors.Retention),
         };
     }
 

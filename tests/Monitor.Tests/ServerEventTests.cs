@@ -223,6 +223,9 @@ internal sealed class CountingInstanceService : IInstanceService
     public ICollection<string> GetLogs(string instanceName, int maxLines = 10) => throw new NotImplementedException();
     public Task<ICollection<string>> GetLogsAsync(string instanceName, int maxLines = 10, CancellationToken cancellationToken = default) => throw new NotImplementedException();
     public KgsmResult GetStatus(string instanceName) => throw new NotImplementedException();
+    public KgsmResult Kick(string instanceName, string target, string? actor = null, string? origin = null) => throw new NotImplementedException();
+    public KgsmResult Ban(string instanceName, string target, string? actor = null, string? origin = null) => throw new NotImplementedException();
+    public KgsmResult Unban(string instanceName, string target, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public KgsmResult GetInfo(string instanceName) => throw new NotImplementedException();
     public bool IsActive(string instanceName) => throw new NotImplementedException();
     public KgsmResult Start(string instanceName, string? actor = null, string? origin = null) => throw new NotImplementedException();
@@ -282,7 +285,7 @@ internal sealed class RecordingEventService : IEventService
     // Not exercised by ServerEventTests (that's the raw-handler dispatch path covered by
     // EventHistoryStore/EventPersistService tests against the real EventService); a no-op
     // fake here just needs to satisfy the interface.
-    public void RegisterRawHandler(Func<EventWrapper, Task> handler) { }
+    public void RegisterRawHandler(Func<EventWrapper, EventPosition, Task> handler) { }
     public void RegisterGapHandler(Func<EventJournalGap, Task> handler) { }
 
     public void Dispose() { }

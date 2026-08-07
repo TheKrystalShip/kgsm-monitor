@@ -308,8 +308,6 @@ carry numbers; other kinds read `null` until their measurement path lands (conta
 | `GET /metrics` | `200` | the JSON frame (§3) | `503` until the first tick lands — see below. |
 | `GET /health` | `200` | `ok\n` (text/plain) | Liveness/availability. Returns `200` even before the first frame. |
 | `GET /metrics/history` | `200` | windowed metric series | Mapped only when metrics history is enabled. Tier picked by range. |
-| `GET /events` | `200` | engine-event page + `gaps` | Mapped only when event history is enabled. See §4.1. |
-| `POST /events/rebuild` | `200` / `409` | the rebuild report | Rebuilds the event index from the engine's journal. See §4.1. |
 
 - **`503 Service Unavailable` on `/metrics`** means the daemon is up but hasn't completed
   its first sample yet (a sub-second window right after start). **Handle it:** retry after
@@ -319,34 +317,19 @@ carry numbers; other kinds read `null` until their measurement path lands (conta
   beyond the path+method is ignored — it is a pure read. Unmapped methods → `405`, unmapped
   paths → `404`.
 
-### 4.1 Engine events: an index over the engine's journal
+### 4.1 Engine events are not served here
 
-`GET /events` serves the monitor's **index**, not the record. The record is kgsm's append-only
-event journal (`/var/lib/kgsm/events/YYYY-MM-DD.ndjson`) — a file you may read yourself; the
-monitor holds no claim on it. `events.db` exists because NDJSON cannot answer "the last 50 events
-for this instance, paged" in bounded time.
+The monitor exposes **no event endpoint**. It reads the engine's journal only to learn that the
+instance list has changed, and stores nothing.
 
-Two consequences for a consumer:
+Engine event history comes from the record itself — kgsm's append-only journal at
+`/var/lib/kgsm/events/YYYY-MM-DD.ndjson`, which any number of readers may tail or query
+concurrently. From C#, read it through kgsm-lib's `IEventJournalHistory`; the format is documented
+in `kgsm/docs/events.md` if you would rather parse it yourself.
 
-- **A non-empty `gaps` array means this window is incomplete** — engine events happened that the
-  index will never contain, because their journal segments were pruned before the monitor read
-  them. An empty array is a positive claim of unbroken coverage. Surface it; do not drop it.
-- **`POST /events/rebuild` is the repair path**, for when the index holds less than the journal
-  does: a persist failure the daemon logged and swallowed while its cursor moved on, an index
-  retention window that was widened after the fact, or a lost/corrupt `events.db`. It replays
-  every surviving segment and returns a measured report:
-
-  ```json
-  { "status": "ok", "journalDirectory": "/var/lib/kgsm/events", "segments": 1,
-    "oldestSegment": "2026-08-04.ndjson", "newestSegment": "2026-08-04.ndjson",
-    "lines": 57, "inserted": 20, "duplicates": 37, "malformed": 0, "elapsedMs": 2 }
-  ```
-
-  It is **additive** — it never clears the table (the journal is pruned on age and the index is
-  not, so rows whose segments are gone are irreplaceable), never moves the live read cursor, and
-  never erases a recorded gap. Safe to call on a running daemon; `inserted: 0` is the healthy
-  answer. `status` is `ok`, `no_journal` (the directory does not exist — a different fact from an
-  empty journal), or `busy` with `409` when a rebuild is already running.
+That is deliberate: what happened to a host is a property of the host, and making it depend on a
+metrics daemon being installed meant a host could hold every one of its events on disk and still be
+unable to answer for them.
 
 ---
 
@@ -440,7 +423,7 @@ no query params, headers, or control endpoints. If you need different behaviour,
 | `KGSM_MONITOR_IFACE_DENY` | `veth` | Which interfaces appear in `net.ifaces`. |
 | `KGSM_MONITOR_MOUNT_FS_DENY` | *(empty)* | Extra fs types hidden from `disk.mounts`. |
 | `KGSM_MONITOR_KGSM_PATH` | *(empty)* | **Unset ⇒ `servers` always `[]`** (host-only). Set ⇒ per-server on. |
-| `KGSM_MONITOR_KGSM_JOURNAL` | `/var/lib/kgsm/events` | The engine event journal the monitor reads. Read-only and shared — you may tail it too. |
+| `KGSM_MONITOR_KGSM_JOURNAL` | `/var/lib/kgsm/events` | The engine event journal the monitor reads for resync signals. Read-only and shared — you may tail or query it too. |
 | `KGSM_MONITOR_RESYNC_MS` | `15000` (floor 1000) | How fast a started/stopped server's presence catches up (worst case, absent events). |
 | `KGSM_MONITOR_DISK_USAGE_MS` | `60000` (floor 5000) | How often each server's `diskBytes` footprint is recomputed (a directory walk, §3.5) — your `diskBytes` refresh rate. |
 | `KGSM_MONITOR_EVENTS` | `on` | When on, lifecycle events make new servers appear sub-second instead of after `RESYNC_MS`. |

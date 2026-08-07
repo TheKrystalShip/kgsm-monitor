@@ -322,39 +322,6 @@
       "min": 1000,
       "unit": "ms",
       "risk": "safe"
-    },
-    {
-      "key": "eventHistoryDisabled",
-      "env": "Monitor__EventHistoryDisabled",
-      "label": "Disable event history",
-      "description": "Turn off persistence of KGSM engine events. Independent of metrics history — either can be off without the other. The Control Panel's audit timeline loses its engine-event source.",
-      "group": "events",
-      "type": "bool",
-      "default": "false",
-      "risk": "safe",
-      "dependsOn": "kgsmPath"
-    },
-    {
-      "key": "eventsDbPath",
-      "env": "Monitor__EventsDbPath",
-      "label": "Event database",
-      "description": "SQLite file holding engine-event history, kept separate from the metrics store so the two never contend for a writer. Repointing it starts empty and orphans the existing history.",
-      "group": "events",
-      "type": "path",
-      "default": "/var/lib/kgsm-monitor/events.db",
-      "risk": "destructive"
-    },
-    {
-      "key": "eventRetentionDays",
-      "env": "Monitor__EventRetentionDays",
-      "label": "Event retention",
-      "description": "How long engine events are kept. There is no rollup tier — these are discrete facts, so rows simply age out. Lowering it prunes existing rows.",
-      "group": "events",
-      "type": "int",
-      "default": "30",
-      "min": 1,
-      "unit": "days",
-      "risk": "destructive"
     }
   ]
 }

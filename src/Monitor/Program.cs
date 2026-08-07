@@ -53,13 +53,14 @@ if (options.KgsmEnabled)
 {
     // Engine events come from the journal: a file any number of consumers read concurrently,
     // with no socket to bind, no path to own, and nothing for the engine to be configured with.
-    // CursorOrOldest because this monitor IS the event index — it must be able to replay the
-    // surviving journal to rebuild, and the deterministic AuditId makes a replay idempotent.
+    // Tail with no cursor — these events only trigger a watch-list resync, and the resync floor
+    // re-derives the same answer anyway, so replaying a backlog on start would be redundant work
+    // rather than recovered state. The monitor persists no event, so there is nothing to catch up.
     builder.Services.AddKgsmServices(new KgsmOptions
     {
         KgsmPath = options.KgsmPath,
         EventJournalDirectory = options.KgsmJournalDir,
-        EventStartPosition = EventStartPosition.CursorOrOldest
+        EventStartPosition = EventStartPosition.Tail
     });
     builder.Services.AddSingleton<ServerSampler>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerSampler>());
@@ -88,31 +89,8 @@ if (options.HistoryEnabled)
     builder.Services.AddHostedService<MetricsPersistService>();
 }
 
-// Event index: the monitor owns the queryable index over KGSM ENGINE events (server-triggered
-// lifecycle/config/etc). The record itself is the engine's append-only journal — events.db is derived
-// from it and rebuildable from it (POST /events/rebuild). Gated on KgsmEnabled (needs IEventService,
-// only registered above under that flag) AND EventHistoryEnabled (an independent opt-out from metrics
-// history). A separate events.db (own WAL/single-writer gate) — no contention with the 15s metrics
-// flusher. GET /events serves windowed/filtered queries; kgsm-api merges this with its own API-only
-// audit rows at read time — the monitor stays a neutral leaf with no dependency on the API.
-if (options.KgsmEnabled && options.EventHistoryEnabled)
-{
-    builder.Services.AddSingleton<EventHistoryStore>();
-    builder.Services.AddSingleton<EventIndexRebuilder>();
-
-    // Replaces the library's default file-backed cursor store, registered above by
-    // AddKgsmServices — last registration wins. The monitor's position belongs in the same
-    // database as the events derived from it, not in a separate file that can disagree with it.
-    builder.Services.AddSingleton<IEventCursorStore, EventJournalCursorStore>();
-
-    builder.Services.AddHostedService<EventPersistService>();
-}
-
-// One shared rollup/prune/vacuum loop for whichever history store(s) are active. Registered whenever
-// either metrics or event history is on; MetricsMaintenanceService takes both stores as OPTIONAL
-// constructor params so it degrades correctly if only one is enabled (they're independently
-// toggleable — see MonitorOptions.HistoryEnabled / EventHistoryEnabled).
-if (options.HistoryEnabled || (options.KgsmEnabled && options.EventHistoryEnabled))
+// The rollup/prune/vacuum loop for metrics history.
+if (options.HistoryEnabled)
 {
     builder.Services.AddHostedService<MetricsMaintenanceService>();
 }
@@ -180,43 +158,6 @@ if (options.HistoryEnabled)
             return Results.BadRequest();
         MetricsHistoryResponse resp = await store.QueryHistoryAsync(entityKind, id, range, ct);
         return Results.Json(resp, MonitorHistoryJsonContext.Default.MetricsHistoryResponse);
-    });
-}
-
-// Windowed/filtered engine-event history. Primitive query params only (AOT-safe minimal-API
-// binding); ms/int values are parsed by hand. ts-DESC, composite (before_ts, before_id) keyset
-// cursor. Serialized via the same daemon-local history JSON context as /metrics/history. Only mapped
-// when event history is enabled (the store singleton exists).
-if (options.KgsmEnabled && options.EventHistoryEnabled)
-{
-    app.MapGet("/events", async (
-        EventHistoryStore store,
-        string? instance, string? blueprint, string? type, string? since, string? until,
-        string? before_ts, string? before_id, string? limit,
-        CancellationToken ct) =>
-    {
-        long? sinceMs = long.TryParse(since, out long sv) ? sv : null;
-        long? untilMs = long.TryParse(until, out long uv) ? uv : null;
-        long? beforeTsMs = long.TryParse(before_ts, out long bv) ? bv : null;
-        int lim = int.TryParse(limit, out int lv) ? lv : EventHistoryStore.DefaultLimit;
-
-        EventHistoryResponse resp = await store.QueryEventsAsync(
-            instance, type, sinceMs, untilMs, beforeTsMs, before_id, lim, blueprint, ct);
-        return Results.Json(resp, MonitorHistoryJsonContext.Default.EventHistoryResponse);
-    });
-
-    // Rebuild the index from the journal it is derived from — the operator's recovery path when
-    // events.db is lost, corrupted, or was never written (a monitor that was down while the engine
-    // kept emitting). Additive and idempotent: it inserts what is missing, never clears the table,
-    // never moves the live cursor, and never erases a recorded gap. Safe to call while streaming.
-    // POST because it writes, though it is the rare write with no arguments to get wrong.
-    app.MapPost("/events/rebuild", async (EventIndexRebuilder rebuilder, CancellationToken ct) =>
-    {
-        EventIndexRebuildResult result = await rebuilder.RebuildAsync(ct);
-        return result.Status == "busy"
-            ? Results.Json(result, MonitorHistoryJsonContext.Default.EventIndexRebuildResult,
-                statusCode: StatusCodes.Status409Conflict)
-            : Results.Json(result, MonitorHistoryJsonContext.Default.EventIndexRebuildResult);
     });
 }
 

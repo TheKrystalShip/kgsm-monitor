@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed — the engine-event index (**breaking**)
+
+`GET /events`, `POST /events/rebuild` and `events.db` are gone, along with `EventHistoryStore`,
+`EventPersistService`, `EventIndexRebuilder`, `EventJournalCursorStore` and the
+`Monitor__EventHistoryDisabled` / `Monitor__EventsDbPath` / `Monitor__EventRetentionDays` knobs.
+
+The index was only ever derived from kgsm's event journal — shorter-lived than the record it
+copied, and rebuildable from it. What it cost was the coupling: reading audit history required
+running a resource-metrics daemon, two things that share nothing but a SQLite idiom, so a host
+without this leaf could hold every one of its engine events on disk and still be unable to answer
+for them. Engine history is now read from the journal directly through kgsm-lib's
+`IEventJournalHistory`, by kgsm-api and the assistant alike.
+
+The `gap` table retires with it. It recorded a *consumer-liveness* failure — this daemon's cursor
+pointing at a segment retention had deleted — which a reader holding no cursor cannot have. The
+honest replacement is the reader's `CoverageFrom`: the oldest event the journal still holds,
+derived rather than recorded.
+
+**Before deploying, run `tools/backfill-journal.py`** if this host's `events.db` predates its
+journal. The index was written while the socket transport was live and may hold events the journal
+never received; those rows exist nowhere else. Delete `events.db*` only after the export.
+
+### Changed — the monitor tails events at the tail, and stores none
+
+`ServerSampler` still learns from the journal that the instance list has moved. That is the whole
+remaining interest: the start position moves from `CursorOrOldest` to `Tail` with no cursor store,
+because a replayed event would trigger a resync the periodic floor was going to do anyway.
+
+### Changed — kgsm-lib 3.0.0
+
+Up from 2.0.0, so this build also picks up the player-moderation verbs and the raw-handler position
+that landed between. `MetricsMaintenanceService` loses its optional event-store parameter and is
+metrics-only.
+
 ### Added — `tools/backfill-journal.py`
 
 Exports engine events held only in `events.db` into kgsm's event journal, so the record covers

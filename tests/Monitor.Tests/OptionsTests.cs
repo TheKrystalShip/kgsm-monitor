@@ -39,10 +39,8 @@ public class OptionsTests
             (nameof(MonitorSettings.RollupStepMin), ""),
             (nameof(MonitorSettings.RollupRetentionDays), ""),
             (nameof(MonitorSettings.MaintenanceMs), ""),
-            (nameof(MonitorSettings.EventRetentionDays), ""),
             (nameof(MonitorSettings.EventsEnabled), ""),
-            (nameof(MonitorSettings.HistoryDisabled), ""),
-            (nameof(MonitorSettings.EventHistoryDisabled), ""));
+            (nameof(MonitorSettings.HistoryDisabled), ""));
 
         var defaults = new MonitorOptions();
         Assert.Equal(defaults.IntervalMs, o.IntervalMs);
@@ -53,10 +51,8 @@ public class OptionsTests
         Assert.Equal(defaults.RollupStepMin, o.RollupStepMin);
         Assert.Equal(defaults.RollupRetentionDays, o.RollupRetentionDays);
         Assert.Equal(defaults.MaintenanceMs, o.MaintenanceMs);
-        Assert.Equal(defaults.EventRetentionDays, o.EventRetentionDays);
         Assert.Equal(defaults.EventsEnabled, o.EventsEnabled);
         Assert.Equal(defaults.HistoryEnabled, o.HistoryEnabled);
-        Assert.Equal(defaults.EventHistoryEnabled, o.EventHistoryEnabled);
     }
 
     // The other half of the contract: a value that is present but is not a number is NOT quietly
@@ -112,7 +108,6 @@ public class OptionsTests
         Assert.Equal(1, Bind(("RawRetentionHours", "0")).RawRetentionHours);
         Assert.Equal(1, Bind(("RollupStepMin", "0")).RollupStepMin);
         Assert.Equal(1, Bind(("RollupRetentionDays", "0")).RollupRetentionDays);
-        Assert.Equal(1, Bind(("EventRetentionDays", "0")).EventRetentionDays);
     }
 
     [Fact]
@@ -153,13 +148,6 @@ public class OptionsTests
         Assert.Equal("hotrod", o.HostId);
     }
 
-    [Fact]
-    public void The_two_history_switches_are_independent()
-    {
-        Assert.True(Bind(("EventHistoryDisabled", "true")).HistoryEnabled);
-        Assert.False(Bind(("EventHistoryDisabled", "true")).EventHistoryEnabled);
-        Assert.True(Bind(("HistoryDisabled", "true")).EventHistoryEnabled);
-    }
 
     [Fact]
     public void Malformed_socket_mode_keeps_the_default()
