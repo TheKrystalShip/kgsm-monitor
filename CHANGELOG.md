@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — `tools/backfill-journal.py`
+
+Exports engine events held only in `events.db` into kgsm's event journal, so the record covers
+the full window and the index can be retired (`tks/audit-journal-reader-plan.md`). The index was
+written while the socket transport was live and therefore holds events from before the journal
+existed; those rows exist nowhere else.
+
+Rows are matched against the journal by event identity — type, timestamp, payload, host — and
+not by date, so the boundary day where the two overlap deduplicates correctly. `Actor`/`Origin`
+are deliberately outside the match: the two paths enriched the same action differently across
+the cutover, and treating that as two events would write a second row claiming someone else did
+the same thing in the same second. Where both hold an event the journal's copy stands.
+
+`KGSMVersion` does not survive — the index has no such column, so a backfilled line omits it and
+it reads as null, honestly absent rather than invented. Every other envelope field round-trips.
+
+Reports by default; `--apply` writes. Segments are written whole to a temporary file and renamed
+into place, and it refuses to rewrite the segment the engine is currently appending to.
+
 ### Added — per-leaf resource metrics (Contracts 1.4.0)
 
 `Snapshot.leaves` carries one `LeafMetrics` per running KGSM leaf — `cpuPctCore`, `memBytes`,
