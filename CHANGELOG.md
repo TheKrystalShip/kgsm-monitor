@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`GET /stats`** — the daemon's report on itself, for the Control Panel's monitor page: nominal
+  sample interval and the newest frame's timestamp, what that frame actually covered, and the history
+  store's measured contents (row and entity counts per tier, the real span each tier holds, database
+  size including its WAL) beside the retention it was configured with. The two are reported side by
+  side and never reconciled — a measured span in excess of the window is the only externally visible
+  sign that the maintenance pass has stopped completing.
+- `HistoryStore.StatsAsync` and a `MaintenanceState` holder recording when the rollup/prune/vacuum pass
+  last completed and whether it succeeded. A failed pass was previously logged and otherwise invisible.
+
 ### Removed — the engine-event index (**breaking**)
 
 `GET /events`, `POST /events/rebuild` and `events.db` are gone, along with `EventHistoryStore`,

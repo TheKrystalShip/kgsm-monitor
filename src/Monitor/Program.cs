@@ -89,7 +89,10 @@ if (options.HistoryEnabled)
     builder.Services.AddHostedService<MetricsPersistService>();
 }
 
-// The rollup/prune/vacuum loop for metrics history.
+// The rollup/prune/vacuum loop for metrics history. Its outcome holder is registered unconditionally:
+// GET /stats reads it whether or not history is on, and a missing singleton would make the endpoint's
+// wiring depend on a knob rather than the answer depending on it.
+builder.Services.AddSingleton<MaintenanceState>();
 if (options.HistoryEnabled)
 {
     builder.Services.AddHostedService<MetricsMaintenanceService>();
@@ -103,6 +106,9 @@ builder.WebHost.ConfigureKestrel(kestrel =>
         File.Delete(options.SocketPath);
     kestrel.ListenUnixSocket(options.SocketPath);
 });
+
+// Stamped before the host starts so uptime is this process's, not the endpoint's first call.
+var startedAt = DateTimeOffset.UtcNow;
 
 var app = builder.Build();
 
@@ -160,6 +166,74 @@ if (options.HistoryEnabled)
         return Results.Json(resp, MonitorHistoryJsonContext.Default.MetricsHistoryResponse);
     });
 }
+
+// What this recorder is doing and what it has recorded — the daemon's view of itself, as opposed to
+// /metrics (the host's numbers) and /metrics/history (a window of them). Always mapped: with history off
+// it still answers, reporting `history:null`, because "history is switched off" is exactly the kind of
+// thing an operator comes here to find out and a 404 would leave them guessing.
+//
+// The store read touches SQLite, so unlike /metrics this endpoint does real work per call. It is a
+// human-cadence page, not a scrape target, and the counts are cheap (PK-index aggregates).
+app.MapGet("/stats", async (
+    MetricsSampler sampler,
+    MonitorOptions opts,
+    MaintenanceState maintenance,
+    IServiceProvider services,
+    CancellationToken ct) =>
+{
+    Snapshot? latest = sampler.Latest;
+
+    // Coverage is counted off the newest FRAME, not off what the daemon was told to watch: a source
+    // configured but finding nothing and a source not configured are different facts, and the frame is
+    // the one that reports what was actually measured. No frame yet ⇒ zeroes beside the enabled flags,
+    // which together say "wired, nothing sampled yet".
+    var coverage = new SampleCoverage(
+        Servers: latest?.Servers.Length ?? 0,
+        Leaves: latest?.Leaves.Length ?? 0,
+        Sensors: latest?.Sensors.Length ?? 0,
+        Cores: latest?.Cpu.PerCore.Length ?? 0,
+        ServersEnabled: opts.KgsmEnabled,
+        LeavesEnabled: opts.LeafMetricsEnabled);
+
+    HistoryStats? history = null;
+    if (opts.HistoryEnabled && services.GetService(typeof(HistoryStore)) is HistoryStore store)
+    {
+        HistoryStoreStats? measured = await store.StatsAsync(ct);
+        if (measured is not null)
+        {
+            // The configured intents and the measured reality, joined here and never reconciled: the
+            // whole value of this block is that the reader can see them disagree.
+            history = new HistoryStats(
+                DbPath: measured.DbPath,
+                DbBytes: measured.DbBytes,
+                RawRetentionHours: opts.RawRetentionHours,
+                RollupStepMin: opts.RollupStepMin,
+                RollupRetentionDays: opts.RollupRetentionDays,
+                MaintenanceMs: opts.MaintenanceMs,
+                LastMaintenanceMs: maintenance.LastRunMs,
+                LastMaintenanceOk: maintenance.LastOk,
+                RawRows: measured.RawRows,
+                RawEntities: measured.RawEntities,
+                RawOldestMs: measured.RawOldestMs,
+                RawNewestMs: measured.RawNewestMs,
+                RollupRows: measured.RollupRows,
+                RollupEntities: measured.RollupEntities,
+                RollupOldestMs: measured.RollupOldestMs,
+                RollupNewestMs: measured.RollupNewestMs);
+        }
+    }
+
+    var stats = new MonitorStats(
+        IntervalMs: opts.IntervalMs,
+        LatestSampleMs: latest?.Ts,
+        // Measured from this process, so a daemon that restarted five minutes ago says so — which is
+        // the explanation for a history gap that would otherwise look like a store fault.
+        UptimeSec: (long)(DateTimeOffset.UtcNow - startedAt).TotalSeconds,
+        Coverage: coverage,
+        History: history);
+
+    return Results.Json(stats, MonitorHistoryJsonContext.Default.MonitorStats);
+});
 
 app.Logger.LogInformation(
     "kgsm-monitor listening on unix:{Socket} (interval {Interval}ms)",

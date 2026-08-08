@@ -15,15 +15,18 @@ public sealed class MetricsMaintenanceService : BackgroundService
 {
     private readonly HistoryStore? _store;
     private readonly MonitorOptions _options;
+    private readonly MaintenanceState _state;
     private readonly ILogger<MetricsMaintenanceService> _logger;
 
     public MetricsMaintenanceService(
         MonitorOptions options,
+        MaintenanceState state,
         ILogger<MetricsMaintenanceService> logger,
         HistoryStore? store = null)
     {
         _store = store;
         _options = options;
+        _state = state;
         _logger = logger;
     }
 
@@ -34,9 +37,10 @@ public sealed class MetricsMaintenanceService : BackgroundService
             _options.MaintenanceMs, _options.RawRetentionHours, _options.RollupRetentionDays, _options.RollupStepMin);
 
         // Catch-up pass on startup (downtime = honest gaps, not backfilled).
-        try { await RunMaintenanceAsync(stoppingToken).ConfigureAwait(false); }
+        try { await RunMaintenanceAsync(stoppingToken).ConfigureAwait(false); _state.Record(true); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            _state.Record(false);
             _logger.LogWarning(ex, "metrics maintenance: startup pass failed");
         }
 
@@ -48,9 +52,14 @@ public sealed class MetricsMaintenanceService : BackgroundService
                 try
                 {
                     await RunMaintenanceAsync(stoppingToken).ConfigureAwait(false);
+                    // Recorded whether or not history is enabled: with the store absent the pass is a
+                    // no-op that trivially succeeds, and reporting "never ran" for a daemon whose timer
+                    // is ticking fine would send someone looking for a fault that isn't there.
+                    _state.Record(true);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    _state.Record(false);
                     _logger.LogWarning(ex, "metrics maintenance: tick failed");
                 }
             }
