@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using TheKrystalShip.KGSM.Monitor.Contracts;
 
 namespace TheKrystalShip.KGSM.Monitor.Thresholds;
@@ -7,7 +8,13 @@ namespace TheKrystalShip.KGSM.Monitor.Thresholds;
 /// thresholding a field this enum does not name is a compile error, never a runtime guess at what the
 /// daemon honestly carries. <c>Host*</c> members are host-scope; <c>Server*</c> members yield one
 /// observation per <see cref="Snapshot.Servers"/> row — see <see cref="ThresholdMetrics.IsHostScope"/>.
+/// <para>
+/// Serialized by NAME, so a policy file and a <c>PUT</c> body both say <c>"HostTempC"</c>. An unknown name
+/// fails deserialization, which is what turns "this build has never heard of that metric" into a rejected
+/// request rather than a rule that silently watches whatever member happens to be zero.
+/// </para>
 /// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ThresholdMetric>))]
 public enum ThresholdMetric
 {
     /// <summary>Host RAM, percent (<c>Snapshot.Mem.UsedPct</c>).</summary>

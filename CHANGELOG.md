@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`GET|PUT|DELETE /thresholds`** — the rules this daemon watches its own numbers against, and the one place
+  they change without a restart. A policy is applied whole, validated whole, and persisted before it is
+  swapped in, so a refused one leaves the running rules untouched and one that could not be written is never
+  reported as applied. Only the rules whose terms actually changed lose their dwell clocks. An override lives
+  at `Monitor__ThresholdPolicyPath`; deleting it (or `DELETE`) returns the host to the built-in defaults.
+  ⚠ This makes the metrics socket writable, which it previously was not. The boundary is unchanged — the
+  socket's filesystem permissions, which already govern reading every metric this host produces.
 - **Threshold evaluation** (`src/Monitor/Thresholds/`) — the daemon decides which metrics are over their
   line, at the sample cadence, and publishes the verdict on every frame. A breach must hold for the rule's
   fire dwell before a condition opens; clearing needs both a hysteresis margin and a clear dwell; the

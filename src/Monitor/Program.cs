@@ -82,6 +82,15 @@ if (options.LeafMetricsEnabled)
 if (options.ThresholdsEnabled)
 {
     builder.Services.AddSingleton<ConditionEvaluator>();
+    builder.Services.AddSingleton<PolicyStore>();
+
+    // Every RESPONSE this daemon writes names its context explicitly, so the framework's own serializer
+    // options have never needed a resolver. A request BODY is different: minimal APIs bind it through those
+    // options, and with no resolver the PUT below cannot be built — which fails while the route table is
+    // being constructed and therefore takes every endpoint down with it, /metrics included. Registering the
+    // context here is what makes the body bindable.
+    builder.Services.ConfigureHttpJsonOptions(json =>
+        json.SerializerOptions.TypeInfoResolverChain.Insert(0, MonitorThresholdJsonContext.Default));
 }
 
 // The sampler is one singleton that is also the hosted background service, so the
@@ -173,6 +182,41 @@ if (options.HistoryEnabled)
             return Results.BadRequest();
         MetricsHistoryResponse resp = await store.QueryHistoryAsync(entityKind, id, range, ct);
         return Results.Json(resp, MonitorHistoryJsonContext.Default.MetricsHistoryResponse);
+    });
+}
+
+// The rules this daemon watches its own numbers against, and the one place they can be changed without a
+// restart. Only mapped when thresholds are on: with them off there is no policy being evaluated, and
+// serving one would describe rules nothing is applying.
+//
+// NB this makes the socket writable, which it otherwise is not. The boundary is unchanged — the socket's
+// filesystem permissions, which already govern reading every metric this host produces.
+if (options.ThresholdsEnabled)
+{
+    app.MapGet("/thresholds", (PolicyStore store) =>
+        Results.Json(store.Document(), MonitorThresholdJsonContext.Default.ThresholdPolicyDocument));
+
+    app.MapPut("/thresholds", async (ThresholdPolicyRequest? request, PolicyStore store, CancellationToken ct) =>
+    {
+        PolicyStore.ApplyResult result = await store.ApplyAsync(request?.Rules, ct);
+        if (result.Ok)
+            return Results.Json(result.Document, MonitorThresholdJsonContext.Default.ThresholdPolicyDocument);
+
+        // A refused policy is the caller's to fix; a policy that could not be written is this host's, and
+        // the two must not look alike to whatever is driving this.
+        var error = new ThresholdErrorResponse(result.Error!, result.Key);
+        return Results.Json(error, MonitorThresholdJsonContext.Default.ThresholdErrorResponse,
+            statusCode: result.Retryable ? StatusCodes.Status500InternalServerError : StatusCodes.Status400BadRequest);
+    });
+
+    app.MapDelete("/thresholds", async (PolicyStore store, CancellationToken ct) =>
+    {
+        PolicyStore.ApplyResult result = await store.ResetAsync(ct);
+        if (result.Ok)
+            return Results.Json(result.Document, MonitorThresholdJsonContext.Default.ThresholdPolicyDocument);
+        return Results.Json(new ThresholdErrorResponse(result.Error!, null),
+            MonitorThresholdJsonContext.Default.ThresholdErrorResponse,
+            statusCode: StatusCodes.Status500InternalServerError);
     });
 }
 

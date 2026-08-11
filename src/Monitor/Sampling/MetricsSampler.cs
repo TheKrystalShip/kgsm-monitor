@@ -16,7 +16,8 @@ public sealed class MetricsSampler(
     MonitorOptions options,
     ServerSampler? servers = null,
     LeafSampler? leaves = null,
-    ConditionEvaluator? conditions = null) : BackgroundService
+    ConditionEvaluator? conditions = null,
+    PolicyStore? policy = null) : BackgroundService
 {
     private readonly int _intervalMs = options.IntervalMs;
 
@@ -43,8 +44,9 @@ public sealed class MetricsSampler(
     // held for a length of time, and this loop is the only thing that sees every value.
     private readonly ConditionEvaluator? _conditions = conditions;
 
-    // The rule set the evaluator is run against. The built-in baseline until an operator applies their own.
-    private readonly MetricsThresholdPolicy _policy = MetricsThresholdPolicy.Default;
+    // The rule set the evaluator is run against, read fresh each tick so an applied policy takes effect on
+    // the next sample rather than the next restart.
+    private readonly PolicyStore? _policy = policy;
 
     private volatile Snapshot? _latest;
 
@@ -104,8 +106,8 @@ public sealed class MetricsSampler(
         // The rules are evaluated against the frame that is about to be published, and the verdict is folded
         // back into it — so a condition and the reading that produced it are never a tick apart, and a
         // consumer reading one frame sees a self-consistent answer.
-        return _conditions is null
+        return _conditions is null || _policy is null
             ? frame
-            : frame with { Conditions = _conditions.Evaluate(_policy, frame) };
+            : frame with { Conditions = _conditions.Evaluate(_policy.Current, frame) };
     }
 }
