@@ -1,4 +1,5 @@
 using TheKrystalShip.KGSM.Monitor.Contracts;
+using TheKrystalShip.KGSM.Monitor.Thresholds;
 
 namespace TheKrystalShip.KGSM.Monitor.Sampling;
 
@@ -14,7 +15,8 @@ public sealed class MetricsSampler(
     ILogger<MetricsSampler> logger,
     MonitorOptions options,
     ServerSampler? servers = null,
-    LeafSampler? leaves = null) : BackgroundService
+    LeafSampler? leaves = null,
+    ConditionEvaluator? conditions = null) : BackgroundService
 {
     private readonly int _intervalMs = options.IntervalMs;
 
@@ -35,6 +37,14 @@ public sealed class MetricsSampler(
     // empty). Independent of the server sampler above: it needs no KGSM, so a host with no game servers
     // still reports on the daemons running there.
     private readonly LeafSampler? _leaves = leaves;
+
+    // Threshold evaluation — null when switched off, and then every frame carries no conditions. It runs
+    // HERE, on the sample tick, rather than in whatever scrapes the socket: a rule asks whether a value
+    // held for a length of time, and this loop is the only thing that sees every value.
+    private readonly ConditionEvaluator? _conditions = conditions;
+
+    // The rule set the evaluator is run against. The built-in baseline until an operator applies their own.
+    private readonly MetricsThresholdPolicy _policy = MetricsThresholdPolicy.Default;
 
     private volatile Snapshot? _latest;
 
@@ -77,7 +87,7 @@ public sealed class MetricsSampler(
         var disk = _disk.Sample();
         var (load, uptime, host) = SystemSource.Read();
 
-        return new Snapshot(
+        var frame = new Snapshot(
             Ts: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             IntervalMs: _intervalMs,
             Hostname: host,
@@ -90,5 +100,12 @@ public sealed class MetricsSampler(
             Servers: _servers?.Sample() ?? [],
             Leaves: _leaves?.Sample() ?? [],
             Conditions: []);
+
+        // The rules are evaluated against the frame that is about to be published, and the verdict is folded
+        // back into it — so a condition and the reading that produced it are never a tick apart, and a
+        // consumer reading one frame sees a self-consistent answer.
+        return _conditions is null
+            ? frame
+            : frame with { Conditions = _conditions.Evaluate(_policy, frame) };
     }
 }

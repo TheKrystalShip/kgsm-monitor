@@ -21,7 +21,9 @@
     "RawRetentionHours": 24,
     "RollupStepMin": 5,
     "RollupRetentionDays": 30,
-    "MaintenanceMs": 60000
+    "MaintenanceMs": 60000,
+    "ThresholdsDisabled": false,
+    "ThresholdPolicyPath": "/var/lib/kgsm-monitor/thresholds.json"
   },
   "Logging": {
     "LogLevel": {

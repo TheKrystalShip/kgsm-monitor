@@ -5,6 +5,7 @@ using TheKrystalShip.KGSM.Monitor;
 using TheKrystalShip.KGSM.Monitor.Contracts;
 using TheKrystalShip.KGSM.Monitor.History;
 using TheKrystalShip.KGSM.Monitor.Sampling;
+using TheKrystalShip.KGSM.Monitor.Thresholds;
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
@@ -73,6 +74,14 @@ if (options.LeafMetricsEnabled)
 {
     builder.Services.AddSingleton<LeafSampler>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<LeafSampler>());
+}
+
+// Threshold evaluation, registered before the sampler that consumes it. Left unregistered when switched
+// off, which is what makes the sampler's optional dependency resolve to null and every frame carry no
+// conditions — the daemon does not evaluate rules nobody asked it to.
+if (options.ThresholdsEnabled)
+{
+    builder.Services.AddSingleton<ConditionEvaluator>();
 }
 
 // The sampler is one singleton that is also the hosted background service, so the

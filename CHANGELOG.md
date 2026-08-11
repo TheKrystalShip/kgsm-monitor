@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Threshold evaluation** (`src/Monitor/Thresholds/`) — the daemon decides which metrics are over their
+  line, at the sample cadence, and publishes the verdict on every frame. A breach must hold for the rule's
+  fire dwell before a condition opens; clearing needs both a hysteresis margin and a clear dwell; the
+  deadband between them is where a value parked on the line neither opens nor closes anything. Host rules
+  ship enabled, per-server rules ship disabled (absolute thresholds depend on the game). Knobs:
+  `Monitor__ThresholdsDisabled`, `Monitor__ThresholdPolicyPath`.
 - **`Snapshot.Conditions` + `ConditionReading`** (`Monitor.Contracts` **1.5.0**, additive) — the wire shape
   for a threshold verdict: which rule is over its line, on which target, in which band, since when, and the
   highest reading seen since it opened. Breaching conditions only; a clear is an absence. Deliberately free

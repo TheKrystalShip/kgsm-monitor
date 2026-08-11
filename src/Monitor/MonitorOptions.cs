@@ -133,6 +133,16 @@ public sealed class MonitorOptions
     /// monitor runs live-only.</summary>
     public bool HistoryEnabled { get; init; } = true;
 
+    /// <summary>Whether the monitor evaluates threshold rules. When off, no evaluator is wired and
+    /// every frame carries an empty conditions array — a consumer then shows nothing rather than
+    /// all-clear, because "not being watched" and "nothing wrong" are different answers.</summary>
+    public bool ThresholdsEnabled { get; init; } = true;
+
+    /// <summary>File the applied threshold policy is persisted to. Under the systemd
+    /// <c>StateDirectory</c> beside the history database, but deliberately not inside it: the policy
+    /// has to survive <see cref="HistoryEnabled"/> being off.</summary>
+    public string ThresholdPolicyPath { get; init; } = "/var/lib/kgsm-monitor/thresholds.json";
+
     /// <summary>SQLite file for the metrics history store. Defaults under
     /// the systemd <c>StateDirectory</c> (<c>/var/lib/kgsm-monitor</c>, persistent) — NOT the tmpfs
     /// runtime dir where the socket lives.</summary>
@@ -202,6 +212,8 @@ public sealed class MonitorOptions
             RollupStepMin = Floor(s.RollupStepMin ?? defaults.RollupStepMin, MonitorSettings.Floors.Retention),
             RollupRetentionDays = Floor(s.RollupRetentionDays ?? defaults.RollupRetentionDays, MonitorSettings.Floors.Retention),
             MaintenanceMs = Floor(s.MaintenanceMs ?? defaults.MaintenanceMs, MonitorSettings.Floors.MaintenanceMs),
+            ThresholdsEnabled = !(s.ThresholdsDisabled ?? !defaults.ThresholdsEnabled),
+            ThresholdPolicyPath = Or(s.ThresholdPolicyPath, defaults.ThresholdPolicyPath),
         };
     }
 

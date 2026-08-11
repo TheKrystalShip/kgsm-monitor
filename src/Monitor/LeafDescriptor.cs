@@ -20,6 +20,7 @@ using TheKrystalShip.KGSM.LeafConfig;
 [assembly: LeafGroup("leaves", "Per-leaf metrics", 5)]
 [assembly: LeafGroup("history", "Metrics history", 6)]
 [assembly: LeafGroup("events", "Event history", 7)]
+[assembly: LeafGroup("thresholds", "Thresholds", 8)]
 
 // Where this daemon's own configuration comes from, lowest precedence first — the same order
 // Program.cs resolves them in. The settings file is the base the other two override one key of.

@@ -229,4 +229,21 @@ public sealed class MonitorSettings
     [LeafField("maintenanceMs", "Maintenance interval", Group = "history",
         Min = Floors.MaintenanceMs, Unit = "ms")]
     public int? MaintenanceMs { get; set; }
+
+    /// <summary>Whether to stop evaluating threshold rules entirely. Off by default. Independent of any
+    /// individual rule's own <c>enabled</c> flag — this is the one switch that silences the whole source
+    /// without editing the rules an operator tuned.</summary>
+    /// <panel>Stop watching metrics against their thresholds. No conditions are reported while this is on,
+    /// so anything consuming them shows nothing rather than showing all-clear.</panel>
+    [LeafField("thresholdsDisabled", "Disable threshold conditions", Group = "thresholds")]
+    public bool? ThresholdsDisabled { get; set; }
+
+    /// <summary>Where the applied threshold policy is persisted. Deliberately outside the history database:
+    /// the policy has to survive <see cref="HistoryDisabled"/>, and a host that keeps no metrics history
+    /// still watches its thresholds.</summary>
+    /// <panel>File the applied threshold policy is saved to. Deleting it returns this host to the built-in
+    /// defaults on the next restart.</panel>
+    [LeafField("policyPath", "Threshold policy file", Group = "thresholds", Type = LeafType.Path,
+        Risk = LeafRisk.Destructive)]
+    public string ThresholdPolicyPath { get; set; } = "/var/lib/kgsm-monitor/thresholds.json";
 }

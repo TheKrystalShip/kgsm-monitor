@@ -55,6 +55,11 @@
       "id": "events",
       "label": "Event history",
       "order": 7
+    },
+    {
+      "id": "thresholds",
+      "label": "Thresholds",
+      "order": 8
     }
   ],
   "fields": [
@@ -322,6 +327,26 @@
       "min": 1000,
       "unit": "ms",
       "risk": "safe"
+    },
+    {
+      "key": "thresholdsDisabled",
+      "env": "Monitor__ThresholdsDisabled",
+      "label": "Disable threshold conditions",
+      "description": "Stop watching metrics against their thresholds. No conditions are reported while this is on, so anything consuming them shows nothing rather than showing all-clear.",
+      "group": "thresholds",
+      "type": "bool",
+      "default": "false",
+      "risk": "safe"
+    },
+    {
+      "key": "policyPath",
+      "env": "Monitor__ThresholdPolicyPath",
+      "label": "Threshold policy file",
+      "description": "File the applied threshold policy is saved to. Deleting it returns this host to the built-in defaults on the next restart.",
+      "group": "thresholds",
+      "type": "path",
+      "default": "/var/lib/kgsm-monitor/thresholds.json",
+      "risk": "destructive"
     }
   ]
 }
