@@ -88,6 +88,7 @@ public sealed class MetricsSampler(
             Net: net,
             Sensors: _sensors.Sample(),
             Servers: _servers?.Sample() ?? [],
-            Leaves: _leaves?.Sample() ?? []);
+            Leaves: _leaves?.Sample() ?? [],
+            Conditions: []);
     }
 }

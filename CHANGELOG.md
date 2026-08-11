@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`Snapshot.Conditions` + `ConditionReading`** (`Monitor.Contracts` **1.5.0**, additive) — the wire shape
+  for a threshold verdict: which rule is over its line, on which target, in which band, since when, and the
+  highest reading seen since it opened. Breaching conditions only; a clear is an absence. Deliberately free
+  of any consumer's vocabulary — no severities beyond the two bands, no display strings, no deep links.
 - **`GET /stats`** — the daemon's report on itself, for the Control Panel's monitor page: nominal
   sample interval and the newest frame's timestamp, what that frame actually covered, and the history
   store's measured contents (row and entity counts per tier, the real span each tier holds, database

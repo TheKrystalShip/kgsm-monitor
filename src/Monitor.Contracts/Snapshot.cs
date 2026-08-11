@@ -17,7 +17,8 @@ public sealed record Snapshot(
     NetworkMetrics Net,
     SensorReading[] Sensors,  // hwmon temperatures (empty when none/absent — never invented)
     ServerMetrics[] Servers,  // per-KGSM-server cgroup metrics (empty when none running)
-    LeafMetrics[] Leaves);    // per-KGSM-leaf cgroup metrics (empty when off/none running)
+    LeafMetrics[] Leaves,     // per-KGSM-leaf cgroup metrics (empty when off/none running)
+    ConditionReading[] Conditions);  // threshold conditions currently breaching (empty when none/off)
 
 public sealed record CpuMetrics(double TotalPct, double[] PerCore, LoadAvg Load, CpuInfo? Info);
 
@@ -191,3 +192,57 @@ public sealed record LeafMetrics(
     long? IoReadBps,
     long? IoWriteBps,
     int Pids);
+
+/// <summary>
+/// One threshold rule's verdict about one target: this metric is over its line, and has been for long
+/// enough to say so. Decided by the daemon at the <em>sample</em> cadence against every reading it took,
+/// which is what lets it claim a sustained breach at all — a consumer scraping this frame every few
+/// seconds sees a decision, not a sample it must judge for itself.
+/// <para>
+/// <b>The array lists breaching conditions only.</b> A condition that clears is simply absent from the
+/// next frame; there is no cleared/resolved state on the wire. A consumer mirroring these into its own
+/// surface resolves on absence, the same way it would for a server that stopped reporting.
+/// </para>
+/// <para>
+/// <b>Deliberately free of any consumer's vocabulary.</b> No severity names beyond the two threshold
+/// bands, no display strings, no deep links, no ids belonging to somebody else's feed. This says what
+/// the kernel counters did against a configured line, and nothing about what anyone should render.
+/// </para>
+/// </summary>
+/// <param name="EpisodeId">Stable identity for one continuous breach: <c>&lt;ruleKey&gt;:&lt;ref-or-serverId
+/// -or-empty&gt;:&lt;openedAtMs&gt;</c>. Constant for as long as the breach lasts and never reused, so a
+/// consumer can tell "still the same problem" from "it cleared and came back" without diffing values.</param>
+/// <param name="RuleKey">The rule that fired, e.g. <c>host-temp</c>. Stable across restarts and edits;
+/// it is what an operator recognises the rule by.</param>
+/// <param name="Metric">Which measurement the rule watches, as the daemon's own metric name (e.g.
+/// <c>HostTempC</c>). A string rather than a shared enum: the set of measurable fields is the daemon's to
+/// grow, and a consumer that meets an unknown one should carry it, not fail to parse the frame.</param>
+/// <param name="Scope"><c>host</c> or <c>server</c> — whether this is about the machine or about one game
+/// server. Derived from the metric, so a consumer never re-derives it.</param>
+/// <param name="Ref">Which one of several like targets, for a metric that fans out: the mount path for
+/// disk, the chip/label for a sensor. <c>null</c> for a metric with a single target.</param>
+/// <param name="ServerId">The instance this is about, for a <c>server</c>-scope condition; <c>null</c> for
+/// a host-scope one.</param>
+/// <param name="Band"><c>warn</c> or <c>danger</c> — which of the rule's two lines the value is over.
+/// A condition that worsens stays the same episode and changes band.</param>
+/// <param name="Value">The reading at this frame's timestamp, in the metric's own unit.</param>
+/// <param name="WindowMax">The highest reading seen since the breach opened — what actually justifies the
+/// alarm, as opposed to whatever the value happened to be when the frame was built. For a scraper polling
+/// slower than the sample rate these differ, and this is the honest one.</param>
+/// <param name="Threshold">The line <paramref name="Band"/> was crossed at, carried so a consumer can say
+/// how far over the value is without holding a copy of the policy.</param>
+/// <param name="Since">Unix epoch ms when the breach opened — the first reading over the line that went on
+/// to satisfy the rule's dwell, not the moment the dwell completed. So "how long has this been wrong" is
+/// answered from when it started being wrong.</param>
+public sealed record ConditionReading(
+    string EpisodeId,
+    string RuleKey,
+    string Metric,
+    string Scope,
+    string? Ref,
+    string? ServerId,
+    string Band,
+    double Value,
+    double WindowMax,
+    double Threshold,
+    long Since);
