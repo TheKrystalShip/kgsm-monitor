@@ -317,6 +317,62 @@ public class ConditionEvaluatorTests
     }
 
     [Fact]
+    public void Disabling_a_rule_closes_its_open_episode_as_unwatched()
+    {
+        var evaluator = new ConditionEvaluator();
+        var on = Policy(MemRule(warn: 90, fireForSec: 0));
+        var off = Policy(MemRule(warn: 90, fireForSec: 0) with { Enabled = false });
+
+        evaluator.Evaluate(on, MemFrame(95, T0));
+        evaluator.DrainTransitions();   // the opening
+
+        evaluator.Evaluate(off, MemFrame(95, T0 + Secs(1)));
+
+        // Dropping the state without closing left the episode open in the durable record forever while the
+        // live feed showed it gone — the two halves disagreeing about the same condition. It ends as
+        // UNWATCHED, not recovered: the value was never observed to come down, and calling that a recovery
+        // would report a measurement nobody took.
+        EpisodeTransition t = Assert.Single(evaluator.DrainTransitions());
+        Assert.Equal(T0 + Secs(1), t.ClosedTs);
+        Assert.Equal(EpisodeEnd.Unwatched, t.EndReason);
+    }
+
+    [Fact]
+    public void Retuning_a_rule_closes_its_open_episode_as_unwatched()
+    {
+        var evaluator = new ConditionEvaluator();
+        var policy = Policy(MemRule(warn: 90, fireForSec: 0));
+
+        evaluator.Evaluate(policy, MemFrame(95, T0));
+        evaluator.DrainTransitions();
+
+        // The path an operator actually takes: edit a threshold while something is firing against it.
+        evaluator.ResetRule("host-mem");
+        evaluator.Evaluate(Policy(MemRule(warn: 50, fireForSec: 0)), MemFrame(95, T0 + Secs(1)));
+
+        List<EpisodeTransition> transitions = [.. evaluator.DrainTransitions()];
+        EpisodeTransition closed = Assert.Single(transitions, x => x.ClosedTs is not null);
+        Assert.Equal(EpisodeEnd.Unwatched, closed.EndReason);
+
+        // And a new episode opens against the new line, rather than the old one silently carrying on.
+        Assert.Single(transitions, x => x.ClosedTs is null);
+    }
+
+    [Fact]
+    public void A_recovered_episode_says_so()
+    {
+        var evaluator = new ConditionEvaluator();
+        var policy = Policy(MemRule(warn: 90, fireForSec: 0, clearForSec: 0, clearMargin: 5));
+
+        evaluator.Evaluate(policy, MemFrame(95, T0));
+        evaluator.DrainTransitions();
+        evaluator.Evaluate(policy, MemFrame(50, T0 + Secs(1)));
+
+        EpisodeTransition t = Assert.Single(evaluator.DrainTransitions());
+        Assert.Equal(EpisodeEnd.Recovered, t.EndReason);
+    }
+
+    [Fact]
     public void Resetting_a_rule_drops_its_dwell_clocks()
     {
         var evaluator = new ConditionEvaluator();

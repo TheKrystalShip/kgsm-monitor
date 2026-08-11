@@ -70,12 +70,22 @@ public sealed class HistoryStore : IDisposable
                       opened_ts INTEGER NOT NULL, closed_ts INTEGER,
                       peak_band TEXT NOT NULL, peak_value REAL NOT NULL,
                       open_value REAL NOT NULL, close_value REAL, threshold REAL NOT NULL,
-                      producer TEXT NOT NULL);
+                      producer TEXT NOT NULL, close_reason TEXT);
                     CREATE INDEX IF NOT EXISTS ix_episode_opened ON threshold_episode (opened_ts);
                     CREATE INDEX IF NOT EXISTS ix_episode_closed ON threshold_episode (closed_ts);
                     """;
                 await ddl.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
+            // CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so a column added
+            // after the fact needs its own statement. Additive and idempotent: SQLite refuses a duplicate
+            // column, which is the "already migrated" case and is swallowed.
+            await using (SqliteCommand alter = _conn.CreateCommand())
+            {
+                alter.CommandText = "ALTER TABLE threshold_episode ADD COLUMN close_reason TEXT;";
+                try { await alter.ExecuteNonQueryAsync(ct).ConfigureAwait(false); }
+                catch (SqliteException) { /* the column is already there */ }
+            }
+
             _ensured = true;
         }
 
@@ -210,7 +220,7 @@ public sealed class HistoryStore : IDisposable
     /// alarm on the record. Only ever closes an OPEN episode, so a duplicate close is inert.
     /// </summary>
     public async Task CloseEpisodeAsync(string episodeId, long closedTs, double closeValue,
-        double peakValue, string peakBand, CancellationToken ct = default)
+        double peakValue, string peakBand, string reason, CancellationToken ct = default)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -223,7 +233,8 @@ public sealed class HistoryStore : IDisposable
                    SET closed_ts = $closed,
                        close_value = $closeValue,
                        peak_value = MAX(peak_value, $peak),
-                       peak_band = $band
+                       peak_band = $band,
+                       close_reason = $reason
                  WHERE episode_id = $id AND closed_ts IS NULL;
                 """;
             cmd.Parameters.AddWithValue("$id", episodeId);
@@ -231,7 +242,40 @@ public sealed class HistoryStore : IDisposable
             cmd.Parameters.AddWithValue("$closeValue", closeValue);
             cmd.Parameters.AddWithValue("$peak", peakValue);
             cmd.Parameters.AddWithValue("$band", peakBand);
+            cmd.Parameters.AddWithValue("$reason", reason);
             await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// Close every episode left open by a previous run, stamped with when this one started.
+    /// </summary>
+    /// <remarks>
+    /// Dwell state lives only as long as the process, so an episode still open in this table when the daemon
+    /// starts is one nothing will ever close — the evaluator has no memory of it, and the same condition
+    /// coming back opens a NEW episode with a new id. Left alone they accumulate forever, each claiming a
+    /// condition is still true. They are closed as <c>interrupted</c> rather than recovered because the
+    /// value was never seen to come down: what ended was the recording, not necessarily the problem.
+    /// <para>The close time is this run's start, not the last sample before the stop — that timestamp was
+    /// never written down, and inventing one would put a duration in the record that nobody measured.</para>
+    /// </remarks>
+    public async Task<int> CloseOrphanedEpisodesAsync(long startedAtMs, string reason, CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            SqliteConnection conn = await EnsureAsync(ct).ConfigureAwait(false);
+            await using SqliteCommand cmd = conn.CreateCommand();
+            cmd.CommandText =
+                """
+                UPDATE threshold_episode
+                   SET closed_ts = $closed, close_reason = $reason
+                 WHERE closed_ts IS NULL;
+                """;
+            cmd.Parameters.AddWithValue("$closed", startedAtMs);
+            cmd.Parameters.AddWithValue("$reason", reason);
+            return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
         finally { _gate.Release(); }
     }
@@ -251,7 +295,7 @@ public sealed class HistoryStore : IDisposable
             cmd.CommandText =
                 """
                 SELECT episode_id, rule_key, metric, scope, ref, server_id, opened_ts, closed_ts,
-                       peak_band, peak_value, open_value, close_value, threshold, producer
+                       peak_band, peak_value, open_value, close_value, threshold, producer, close_reason
                   FROM threshold_episode
                  WHERE opened_ts >= $since OR (closed_ts IS NOT NULL AND closed_ts >= $since)
                  ORDER BY opened_ts ASC
@@ -278,7 +322,8 @@ public sealed class HistoryStore : IDisposable
                     OpenValue: reader.GetDouble(10),
                     CloseValue: reader.IsDBNull(11) ? null : reader.GetDouble(11),
                     Threshold: reader.GetDouble(12),
-                    Producer: reader.GetString(13)));
+                    Producer: reader.GetString(13),
+                    CloseReason: reader.IsDBNull(14) ? null : reader.GetString(14)));
             }
             return rows;
         }

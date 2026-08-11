@@ -73,9 +73,9 @@ public sealed class ConditionEvaluator
     /// </summary>
     public ConditionReading[] Evaluate(MetricsThresholdPolicy policy, Snapshot snap)
     {
-        ApplyPendingResets();
-
         long nowMs = snap.Ts;
+        ApplyPendingResets(nowMs);
+
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (ThresholdRule rule in policy.Rules)
@@ -145,7 +145,7 @@ public sealed class ConditionEvaluator
             }
             st.ClearSinceMs ??= nowMs;
             if (nowMs - st.ClearSinceMs.Value >= (long)rule.ClearForSec * 1000)
-                Close(st, nowMs);
+                Close(st, nowMs, EpisodeEnd.Recovered);
             return;
         }
 
@@ -171,8 +171,12 @@ public sealed class ConditionEvaluator
             ThresholdRule? rule = FindEnabledRule(policy, st.RuleKey);
             if (rule is null)
             {
-                // The rule was disabled or removed. Its conditions are not "cleared", they are no longer
-                // being asked — so they stop being reported rather than closing with a recovery.
+                // The rule was disabled or removed. Its conditions stop being reported at once — they are
+                // not "clearing", nobody is asking any more — but an OPEN one still has to be closed, or
+                // the durable record goes on claiming a condition is true that nothing is even evaluating.
+                // Closed as unwatched rather than recovered, because the value was never observed to come
+                // down and saying it did would be inventing a measurement.
+                if (st.Open) Close(st, nowMs, EpisodeEnd.Unwatched);
                 (drop ??= []).Add(key);
                 continue;
             }
@@ -196,7 +200,7 @@ public sealed class ConditionEvaluator
             st.ClearSinceMs ??= nowMs;
             if (nowMs - st.ClearSinceMs.Value >= (long)rule.ClearForSec * 1000)
             {
-                Close(st, nowMs);
+                Close(st, nowMs, EpisodeEnd.Recovered);
                 (drop ??= []).Add(key);
             }
         }
@@ -234,23 +238,32 @@ public sealed class ConditionEvaluator
         return readings;
     }
 
-    private void ApplyPendingResets()
+    private void ApplyPendingResets(long nowMs)
     {
         while (_pendingResets.TryDequeue(out string? ruleKey))
         {
             List<string>? drop = null;
             foreach ((string key, TargetState st) in _targets)
-                if (string.Equals(st.RuleKey, ruleKey, StringComparison.Ordinal))
-                    (drop ??= []).Add(key);
+            {
+                if (!string.Equals(st.RuleKey, ruleKey, StringComparison.Ordinal)) continue;
+
+                // The rule's terms changed under an open condition. It is measured against a line that no
+                // longer exists, so it ends here — and ends as unwatched, not recovered: nothing observed
+                // the value come down. Dropping the state without this left the episode open in the store
+                // forever while the live feed showed it resolved, which is the two halves disagreeing about
+                // the same condition.
+                if (st.Open) Close(st, nowMs, EpisodeEnd.Unwatched);
+                (drop ??= []).Add(key);
+            }
 
             if (drop is null) continue;
             foreach (string key in drop) _targets.Remove(key);
         }
     }
 
-    private void Close(TargetState st, long nowMs)
+    private void Close(TargetState st, long nowMs, string reason)
     {
-        _transitions.Enqueue(Transition(st, nowMs));
+        _transitions.Enqueue(Transition(st, nowMs, reason));
         st.Open = false;
         st.ClearSinceMs = null;
         st.BreachSinceMs = null;
@@ -261,7 +274,7 @@ public sealed class ConditionEvaluator
 
     // Project a transition off the target's own state. The state type is private to this class, so this is
     // where the two meet — the record that leaves here carries only what a recorder needs.
-    private static EpisodeTransition Transition(TargetState st, long? closedTs) =>
+    private static EpisodeTransition Transition(TargetState st, long? closedTs, string? reason = null) =>
         new(EpisodeId: st.EpisodeId,
             RuleKey: st.RuleKey,
             Metric: ThresholdMetrics.WireName(st.Metric),
@@ -273,7 +286,8 @@ public sealed class ConditionEvaluator
             Band: st.Band,
             Value: st.LastValue,
             PeakValue: st.WindowMax,
-            Threshold: st.Threshold);
+            Threshold: st.Threshold,
+            EndReason: reason);
 
     private static string? Classify(ThresholdRule rule, double value) =>
         rule.Danger is { } danger && value >= danger ? ConditionBand.Danger
@@ -321,6 +335,26 @@ public sealed class ConditionEvaluator
     }
 }
 
+/// <summary>
+/// Why an episode ended. The distinction is load-bearing for anything writing this down: a value that came
+/// back under its line and a rule that stopped being evaluated are not the same event, and reporting the
+/// second as a recovery claims a measurement nobody took.
+/// </summary>
+public static class EpisodeEnd
+{
+    /// <summary>The value came back under the clear threshold and held there for the rule's dwell.</summary>
+    public const string Recovered = "recovered";
+
+    /// <summary>The rule was retuned, disabled or removed while this was open. The condition was never
+    /// observed to clear — it simply stopped being asked about.</summary>
+    public const string Unwatched = "unwatched";
+
+    /// <summary>The daemon stopped while this was open. Dwell state does not survive a restart, so nothing
+    /// was ever going to close it: the condition may well have still been true, and may have re-opened as a
+    /// new episode on the way back up. What ended here is the RECORDING, not necessarily the problem.</summary>
+    public const string Interrupted = "interrupted";
+}
+
 /// <summary>The two bands a rule defines. A condition is always in one of them while it is open.</summary>
 public static class ConditionBand
 {
@@ -347,4 +381,5 @@ public readonly record struct EpisodeTransition(
     string Band,
     double Value,
     double PeakValue,
-    double Threshold);
+    double Threshold,
+    string? EndReason);

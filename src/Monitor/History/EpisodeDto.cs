@@ -23,7 +23,9 @@ public readonly record struct EpisodeOpen(
 /// <summary>
 /// One recorded threshold episode. <c>ClosedTs</c> null means it is still firing. <c>PeakValue</c> is the
 /// worst reading across the whole episode — the honest justification for it having existed, as opposed to
-/// whatever the value happened to be at either end.
+/// whatever the value happened to be at either end. <c>CloseReason</c> says WHY it ended — a value that
+/// came back under its line and a rule that stopped being evaluated are not the same event, and calling the
+/// second a recovery would claim a measurement nobody took.
 /// </summary>
 public sealed record EpisodeRow(
     string EpisodeId,
@@ -39,7 +41,8 @@ public sealed record EpisodeRow(
     double OpenValue,
     double? CloseValue,
     double Threshold,
-    string Producer);
+    string Producer,
+    string? CloseReason);
 
 /// <summary>The <c>GET /thresholds/episodes</c> response.</summary>
 public sealed record EpisodesResponse(IReadOnlyList<EpisodeRow> Episodes);

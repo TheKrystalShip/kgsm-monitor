@@ -37,6 +37,22 @@ public sealed class EpisodeRecorder(
     {
         logger.LogInformation("threshold episodes: recording to {Db}", options.HistoryDbPath);
 
+        // Anything left open by the previous run is orphaned: the evaluator starts with no memory of it, so
+        // nothing would ever close it and the same condition returning opens a new episode instead. Close
+        // them before recording anything new, or they accumulate forever each claiming to be current.
+        try
+        {
+            int orphans = await store.CloseOrphanedEpisodesAsync(
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), EpisodeEnd.Interrupted, stoppingToken)
+                .ConfigureAwait(false);
+            if (orphans > 0)
+                logger.LogInformation("threshold episodes: closed {Count} left open by the previous run", orphans);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "threshold episodes: could not close what the previous run left open");
+        }
+
         using var timer = new PeriodicTimer(DrainInterval);
         try
         {
@@ -63,7 +79,8 @@ public sealed class EpisodeRecorder(
         {
             if (t.ClosedTs is { } closedTs)
             {
-                await store.CloseEpisodeAsync(t.EpisodeId, closedTs, t.Value, t.PeakValue, t.Band, ct)
+                await store.CloseEpisodeAsync(t.EpisodeId, closedTs, t.Value, t.PeakValue, t.Band,
+                    t.EndReason ?? EpisodeEnd.Recovered, ct)
                     .ConfigureAwait(false);
             }
             else

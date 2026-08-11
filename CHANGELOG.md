@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Closed episodes age off on the rollup retention window (so what fired outlives the samples behind it); an
   OPEN one is never pruned however old. Needs history on — with it off, alerts still work off the live
   frame and nothing is recorded, which is logged at startup rather than left to be discovered.
+  An episode records WHY it ended: `recovered` (the value came back under its line and held), `unwatched`
+  (its rule was retuned, disabled or removed while it was firing) or `interrupted` (the daemon stopped
+  while it was firing). The last two are not recoveries — the value was never observed to come down — and
+  a consumer that called them one would be reporting a measurement nobody took. Episodes left open by a
+  previous run are closed as `interrupted` at startup, since dwell state does not survive a restart and
+  nothing else would ever close them.
 - **`GET|PUT|DELETE /thresholds`** — the rules this daemon watches its own numbers against, and the one place
   they change without a restart. A policy is applied whole, validated whole, and persisted before it is
   swapped in, so a refused one leaves the running rules untouched and one that could not be written is never
