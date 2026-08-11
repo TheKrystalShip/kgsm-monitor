@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Threshold episodes + `GET /thresholds/episodes`** — the durable record of what fired and for how long,
+  as opposed to the live conditions on each frame. One row per continuous breach, carrying the peak reading
+  across it and the leaf id of the daemon that established it, so the store is self-describing at rest.
+  Closed episodes age off on the rollup retention window (so what fired outlives the samples behind it); an
+  OPEN one is never pruned however old. Needs history on — with it off, alerts still work off the live
+  frame and nothing is recorded, which is logged at startup rather than left to be discovered.
 - **`GET|PUT|DELETE /thresholds`** — the rules this daemon watches its own numbers against, and the one place
   they change without a restart. A policy is applied whole, validated whole, and persisted before it is
   swapped in, so a refused one leaves the running rules untouched and one that could not be written is never

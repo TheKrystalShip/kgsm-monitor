@@ -116,6 +116,19 @@ if (options.HistoryEnabled)
     builder.Services.AddHostedService<MetricsMaintenanceService>();
 }
 
+// Threshold episodes — the durable record of what fired and for how long, as opposed to the live
+// conditions on each frame. Needs both halves: something evaluating the rules, and somewhere to write.
+// Missing either, alerts still work off the live frame and nothing is recorded, which is said out loud
+// because "this host keeps no record of what fired" is found out at the worst moment otherwise.
+if (options.ThresholdsEnabled && options.HistoryEnabled)
+{
+    builder.Services.AddHostedService<EpisodeRecorder>();
+}
+else if (options.ThresholdsEnabled)
+{
+    Console.WriteLine("<4>threshold episodes: history is off, so nothing this host alerts on is recorded");
+}
+
 // Server -> client only, and the only consumer is the local KGSM API. Bind a unix
 // domain socket (no exposed TCP port; the socket's filesystem perms are the boundary).
 builder.WebHost.ConfigureKestrel(kestrel =>
@@ -208,6 +221,22 @@ if (options.ThresholdsEnabled)
         return Results.Json(error, MonitorThresholdJsonContext.Default.ThresholdErrorResponse,
             statusCode: result.Retryable ? StatusCodes.Status500InternalServerError : StatusCodes.Status400BadRequest);
     });
+
+    // What fired, and for how long — the durable half, as opposed to /metrics's live conditions. Only
+    // mapped with history on, matching /metrics/history: with no store there are no episodes, and an empty
+    // list would claim nothing ever fired rather than that nothing was written down.
+    if (options.HistoryEnabled)
+    {
+        app.MapGet("/thresholds/episodes", async (HistoryStore store, long? since, int? limit, CancellationToken ct) =>
+        {
+            // Default to the raw-retention window: the same span this host keeps samples for, so an episode
+            // and the curve behind it are readable together or not at all.
+            long sinceMs = since ?? DateTimeOffset.UtcNow.AddHours(-options.RawRetentionHours).ToUnixTimeMilliseconds();
+            int cap = Math.Clamp(limit ?? 500, 1, 5000);
+            IReadOnlyList<EpisodeRow> rows = await store.QueryEpisodesAsync(sinceMs, cap, ct);
+            return Results.Json(new EpisodesResponse(rows), MonitorEpisodeJsonContext.Default.EpisodesResponse);
+        });
+    }
 
     app.MapDelete("/thresholds", async (PolicyStore store, CancellationToken ct) =>
     {

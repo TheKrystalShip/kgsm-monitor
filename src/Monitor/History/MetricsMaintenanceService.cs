@@ -81,6 +81,12 @@ public sealed class MetricsMaintenanceService : BackgroundService
             long rollupCutoff = nowMs - (_options.RollupRetentionDays * 86_400_000L);
             await _store.PruneRollupsAsync(rollupCutoff, ct).ConfigureAwait(false);
 
+            // Closed episodes age off on the rollup window, so what fired outlives the raw samples behind
+            // it — "this ran hot every night last month" stays answerable after the curve is gone. An OPEN
+            // episode is never pruned, however old: one that has been firing for weeks is the one worth
+            // still knowing about.
+            await _store.PruneEpisodesAsync(rollupCutoff, ct).ConfigureAwait(false);
+
             await _store.VacuumAsync(ct).ConfigureAwait(false);
         }
     }

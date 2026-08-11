@@ -63,6 +63,16 @@ public sealed class HistoryStore : IDisposable
                       bucket_ts INTEGER NOT NULL, avg REAL NOT NULL, min REAL NOT NULL,
                       max REAL NOT NULL, n INTEGER NOT NULL,
                       PRIMARY KEY (entity_kind, entity_id, metric, bucket_ts));
+                    CREATE TABLE IF NOT EXISTS threshold_episode (
+                      episode_id TEXT PRIMARY KEY,
+                      rule_key TEXT NOT NULL, metric TEXT NOT NULL, scope TEXT NOT NULL,
+                      ref TEXT, server_id TEXT,
+                      opened_ts INTEGER NOT NULL, closed_ts INTEGER,
+                      peak_band TEXT NOT NULL, peak_value REAL NOT NULL,
+                      open_value REAL NOT NULL, close_value REAL, threshold REAL NOT NULL,
+                      producer TEXT NOT NULL);
+                    CREATE INDEX IF NOT EXISTS ix_episode_opened ON threshold_episode (opened_ts);
+                    CREATE INDEX IF NOT EXISTS ix_episode_closed ON threshold_episode (closed_ts);
                     """;
                 await ddl.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
@@ -148,6 +158,132 @@ public sealed class HistoryStore : IDisposable
     /// <summary>Delete rollup buckets older than <paramref name="cutoffMs"/> (unix ms).</summary>
     public Task<int> PruneRollupsAsync(long cutoffMs, CancellationToken ct = default) =>
         DeleteOlderThanAsync("DELETE FROM rollup WHERE bucket_ts < $cutoff", cutoffMs, "rollup rows", ct);
+
+    /// <summary>Delete CLOSED threshold episodes that closed before <paramref name="cutoffMs"/>. An open
+    /// episode is never pruned however old it is: a condition that has been firing for a month is exactly
+    /// the one worth still knowing about.</summary>
+    public Task<int> PruneEpisodesAsync(long cutoffMs, CancellationToken ct = default) =>
+        DeleteOlderThanAsync(
+            "DELETE FROM threshold_episode WHERE closed_ts IS NOT NULL AND closed_ts < $cutoff",
+            cutoffMs, "threshold episodes", ct);
+
+    /// <summary>
+    /// Record a threshold episode opening. Idempotent on the episode id, so a retry cannot double-write
+    /// and a restart that re-observes an open condition cannot either.
+    /// </summary>
+    public async Task OpenEpisodeAsync(EpisodeOpen episode, CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            SqliteConnection conn = await EnsureAsync(ct).ConfigureAwait(false);
+            await using SqliteCommand cmd = conn.CreateCommand();
+            cmd.CommandText =
+                """
+                INSERT INTO threshold_episode
+                  (episode_id, rule_key, metric, scope, ref, server_id, opened_ts, closed_ts,
+                   peak_band, peak_value, open_value, close_value, threshold, producer)
+                VALUES ($id, $rule, $metric, $scope, $ref, $server, $opened, NULL,
+                        $band, $peak, $open, NULL, $threshold, $producer)
+                ON CONFLICT(episode_id) DO NOTHING;
+                """;
+            cmd.Parameters.AddWithValue("$id", episode.EpisodeId);
+            cmd.Parameters.AddWithValue("$rule", episode.RuleKey);
+            cmd.Parameters.AddWithValue("$metric", episode.Metric);
+            cmd.Parameters.AddWithValue("$scope", episode.Scope);
+            cmd.Parameters.AddWithValue("$ref", (object?)episode.Ref ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$server", (object?)episode.ServerId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$opened", episode.OpenedTs);
+            cmd.Parameters.AddWithValue("$band", episode.Band);
+            cmd.Parameters.AddWithValue("$peak", episode.Value);
+            cmd.Parameters.AddWithValue("$open", episode.Value);
+            cmd.Parameters.AddWithValue("$threshold", episode.Threshold);
+            cmd.Parameters.AddWithValue("$producer", episode.Producer);
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// Record a threshold episode closing, and the worst it got. The peak is maxed rather than
+    /// overwritten, so a value that receded before the close still leaves the reading that justified the
+    /// alarm on the record. Only ever closes an OPEN episode, so a duplicate close is inert.
+    /// </summary>
+    public async Task CloseEpisodeAsync(string episodeId, long closedTs, double closeValue,
+        double peakValue, string peakBand, CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            SqliteConnection conn = await EnsureAsync(ct).ConfigureAwait(false);
+            await using SqliteCommand cmd = conn.CreateCommand();
+            cmd.CommandText =
+                """
+                UPDATE threshold_episode
+                   SET closed_ts = $closed,
+                       close_value = $closeValue,
+                       peak_value = MAX(peak_value, $peak),
+                       peak_band = $band
+                 WHERE episode_id = $id AND closed_ts IS NULL;
+                """;
+            cmd.Parameters.AddWithValue("$id", episodeId);
+            cmd.Parameters.AddWithValue("$closed", closedTs);
+            cmd.Parameters.AddWithValue("$closeValue", closeValue);
+            cmd.Parameters.AddWithValue("$peak", peakValue);
+            cmd.Parameters.AddWithValue("$band", peakBand);
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// Episodes that opened or closed at/after <paramref name="sinceMs"/>, oldest event first. Both
+    /// halves are matched because a consumer catching up after a gap needs the episodes that began in it
+    /// AND the ones that ended in it, and an episode can have done only one of the two.
+    /// </summary>
+    public async Task<IReadOnlyList<EpisodeRow>> QueryEpisodesAsync(long sinceMs, int limit, CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            SqliteConnection conn = await EnsureAsync(ct).ConfigureAwait(false);
+            await using SqliteCommand cmd = conn.CreateCommand();
+            cmd.CommandText =
+                """
+                SELECT episode_id, rule_key, metric, scope, ref, server_id, opened_ts, closed_ts,
+                       peak_band, peak_value, open_value, close_value, threshold, producer
+                  FROM threshold_episode
+                 WHERE opened_ts >= $since OR (closed_ts IS NOT NULL AND closed_ts >= $since)
+                 ORDER BY opened_ts ASC
+                 LIMIT $limit;
+                """;
+            cmd.Parameters.AddWithValue("$since", sinceMs);
+            cmd.Parameters.AddWithValue("$limit", limit);
+
+            var rows = new List<EpisodeRow>();
+            await using SqliteDataReader reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                rows.Add(new EpisodeRow(
+                    EpisodeId: reader.GetString(0),
+                    RuleKey: reader.GetString(1),
+                    Metric: reader.GetString(2),
+                    Scope: reader.GetString(3),
+                    Ref: reader.IsDBNull(4) ? null : reader.GetString(4),
+                    ServerId: reader.IsDBNull(5) ? null : reader.GetString(5),
+                    OpenedTs: reader.GetInt64(6),
+                    ClosedTs: reader.IsDBNull(7) ? null : reader.GetInt64(7),
+                    PeakBand: reader.GetString(8),
+                    PeakValue: reader.GetDouble(9),
+                    OpenValue: reader.GetDouble(10),
+                    CloseValue: reader.IsDBNull(11) ? null : reader.GetDouble(11),
+                    Threshold: reader.GetDouble(12),
+                    Producer: reader.GetString(13)));
+            }
+            return rows;
+        }
+        finally { _gate.Release(); }
+    }
 
     private async Task<int> DeleteOlderThanAsync(string sql, long cutoffMs, string what, CancellationToken ct)
     {

@@ -35,6 +35,11 @@ public sealed class ConditionEvaluator
     private readonly Dictionary<string, TargetState> _targets = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<string> _pendingResets = new();
 
+    // Episodes that opened or closed on the most recent tick, for whoever is recording them. Held rather
+    // than pushed because this runs on the sample tick and persisting is I/O: the sampler drains it and
+    // writes off the hot path, so a slow disk can never delay a sample.
+    private readonly ConcurrentQueue<EpisodeTransition> _transitions = new();
+
     /// <summary>
     /// Drop every open condition and dwell clock belonging to <paramref name="ruleKey"/>. Called when a rule's
     /// terms change, because a dwell measured against the old thresholds says nothing about the new ones.
@@ -45,6 +50,20 @@ public sealed class ConditionEvaluator
     public void ResetRule(string ruleKey)
     {
         if (!string.IsNullOrEmpty(ruleKey)) _pendingResets.Enqueue(ruleKey);
+    }
+
+    /// <summary>
+    /// Take the episode openings and closings observed since this was last called. Draining rather than
+    /// reading means a recorder that falls behind cannot miss one, and a tick with nothing to say costs
+    /// nothing.
+    /// </summary>
+    public IReadOnlyList<EpisodeTransition> DrainTransitions()
+    {
+        if (_transitions.IsEmpty) return [];
+
+        var drained = new List<EpisodeTransition>();
+        while (_transitions.TryDequeue(out EpisodeTransition t)) drained.Add(t);
+        return drained;
     }
 
     /// <summary>
@@ -110,6 +129,7 @@ public sealed class ConditionEvaluator
                 st.Open = true;
                 st.OpenedAtMs = st.BreachSinceMs.Value;
                 st.EpisodeId = MakeEpisodeId(rule.Key, TargetRef(obs), st.OpenedAtMs);
+                _transitions.Enqueue(Transition(st, closedTs: null));
             }
             return;
         }
@@ -125,7 +145,7 @@ public sealed class ConditionEvaluator
             }
             st.ClearSinceMs ??= nowMs;
             if (nowMs - st.ClearSinceMs.Value >= (long)rule.ClearForSec * 1000)
-                Close(st);
+                Close(st, nowMs);
             return;
         }
 
@@ -176,7 +196,7 @@ public sealed class ConditionEvaluator
             st.ClearSinceMs ??= nowMs;
             if (nowMs - st.ClearSinceMs.Value >= (long)rule.ClearForSec * 1000)
             {
-                Close(st);
+                Close(st, nowMs);
                 (drop ??= []).Add(key);
             }
         }
@@ -228,8 +248,9 @@ public sealed class ConditionEvaluator
         }
     }
 
-    private static void Close(TargetState st)
+    private void Close(TargetState st, long nowMs)
     {
+        _transitions.Enqueue(Transition(st, nowMs));
         st.Open = false;
         st.ClearSinceMs = null;
         st.BreachSinceMs = null;
@@ -237,6 +258,22 @@ public sealed class ConditionEvaluator
         st.Band = string.Empty;
         st.WindowMax = 0;
     }
+
+    // Project a transition off the target's own state. The state type is private to this class, so this is
+    // where the two meet — the record that leaves here carries only what a recorder needs.
+    private static EpisodeTransition Transition(TargetState st, long? closedTs) =>
+        new(EpisodeId: st.EpisodeId,
+            RuleKey: st.RuleKey,
+            Metric: ThresholdMetrics.WireName(st.Metric),
+            Scope: ThresholdMetrics.ScopeName(st.Metric),
+            Ref: st.RefKey,
+            ServerId: st.ServerId,
+            OpenedTs: st.OpenedAtMs,
+            ClosedTs: closedTs,
+            Band: st.Band,
+            Value: st.LastValue,
+            PeakValue: st.WindowMax,
+            Threshold: st.Threshold);
 
     private static string? Classify(ThresholdRule rule, double value) =>
         rule.Danger is { } danger && value >= danger ? ConditionBand.Danger
@@ -290,3 +327,24 @@ public static class ConditionBand
     public const string Warn = "warn";
     public const string Danger = "danger";
 }
+
+/// <summary>
+/// An episode starting or ending — the two moments worth a permanent record, as opposed to the per-sample
+/// readings in between. A null <c>ClosedTs</c> is an opening. <c>Value</c> is the reading at the moment of
+/// the transition (what it was when it opened, or what it had come down to when it closed) and
+/// <c>PeakValue</c> the worst across the episode so far, which on a close is the number that actually
+/// justified it and which neither end necessarily shows.
+/// </summary>
+public readonly record struct EpisodeTransition(
+    string EpisodeId,
+    string RuleKey,
+    string Metric,
+    string Scope,
+    string? Ref,
+    string? ServerId,
+    long OpenedTs,
+    long? ClosedTs,
+    string Band,
+    double Value,
+    double PeakValue,
+    double Threshold);
