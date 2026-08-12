@@ -59,7 +59,7 @@
          deserialized event envelope, known or unknown type — src/Monitor/History/EventPersistService.cs)
          and Events.AuditId.ForEvent (the deterministic evt_<hash> id shared with kgsm-api, so both
          sides compute the same id with zero coordination). -->
-    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="4.17.0" />
+    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="4.23.0" />
   </ItemGroup>
 
   <ItemGroup>

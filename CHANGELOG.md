@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **kgsm-lib 4.23.0.** Picks up the journal writer's move into its own package
+  (`TheKrystalShip.KGSM.Journal`), which this daemon resolves transitively — no source change, and the
+  AOT publish stays 0-warn.
+
 ### Added — this daemon records the thresholds it measured
 
 `MonitorJournal` writes `host_threshold_breached` / `host_threshold_cleared` to this daemon's own
