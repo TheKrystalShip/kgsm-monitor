@@ -64,6 +64,24 @@ if (options.KgsmEnabled)
         EventJournalDirectory = options.KgsmJournalDir,
         EventStartPosition = EventStartPosition.Tail
     });
+
+    // Read every producer's journal, not the engine's alone. The supervisor owns instance_started
+    // for a native server, so a reader of the engine's journal alone learns of a start only when
+    // the resync floor comes round — the event is there to react sooner, and half of them were
+    // landing somewhere this daemon was not looking.
+    //
+    // ⚠ Must stay AFTER AddKgsmServices: that call registers a single-journal IEventSource, and
+    // this one replaces it by being registered last. Above it, this silently does nothing.
+    //
+    // This daemon's own journal is discovered along with the rest, and that costs nothing: the four
+    // registered handlers are keyed by payload type, and a threshold episode matches none of them.
+    // Excluding it would be policy inside a mechanism whose whole value is that it measures what is
+    // on disk rather than being told.
+    builder.Services.AddKgsmJournalFederation(
+        cursorPath: null,
+        startPosition: EventStartPosition.Tail,
+        engineJournalDirectory: options.KgsmJournalDir);
+
     builder.Services.AddSingleton<ServerSampler>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerSampler>());
 }

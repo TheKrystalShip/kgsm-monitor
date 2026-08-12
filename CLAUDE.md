@@ -17,9 +17,9 @@ pull-only). It is also the **single source of truth for metrics history**: a per
 writes the latest frame to a SQLite store (raw + rollup tiers) and `GET /metrics/history`
 serves windowed queries (see `src/Monitor/History/`; kgsm-api relays this endpoint verbatim).
 
-It reads **engine events** but stores none: the journal tells `ServerSampler` when the instance
-list has changed, and that is the whole of its interest in them. Audit history is read from the
-journal itself through kgsm-lib (`IEventJournalHistory`), by whoever wants it. Authoritative docs:
+It reads **every producer's events** but stores none: the journals tell `ServerSampler` when the
+instance list has changed, and that is the whole of its interest in them. Audit history is read from
+those journals through kgsm-lib (`IEventJournalHistory`), by whoever wants it. Authoritative docs:
 
 - **`PLAN.md`** — full design, decisions, slice-by-slice tracker.
 - **`docs/integration.md`** — the consumer contract (what kgsm-api / any scraper must handle).
@@ -145,10 +145,16 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
   matters: `1.5.0` modelled `Instance.ports` as a string, but kgsm now emits a structured array,
   so an old pin throws on the detailed instance-list JSON and leaves `servers` permanently `[]`.
 - **The monitor owns exactly one socket.** `Monitor__SocketPath` (`metrics.sock`, default
-  `/run/kgsm-monitor/`) is outbound: consumers scrape it. Engine events arrive the other way,
-  from a **file** — `Monitor__KgsmJournalDir` (default `/var/lib/kgsm/events`), read-only,
-  with the engine as sole writer and no reservation of any kind. The resync floor is the
-  watch-list's source of truth; events only make it react sooner.
+  `/run/kgsm-monitor/`) is outbound: consumers scrape it. Events arrive the other way,
+  from **files** — every producer's journal, read-only, with no reservation of any kind. The resync
+  floor is the watch-list's source of truth; events only make it react sooner.
+- **`Monitor__KgsmJournalDir` names the engine's journal, not the only one read.**
+  `AddKgsmJournalFederation` tails every producer, and it must stay registered **after**
+  `AddKgsmServices` — above it the single-journal registration wins, silently, and a native
+  `instance_started` (the **supervisor's** event, in its own journal) reaches nothing here. The
+  setting exists because the engine's location is configurable; the rest are found at their own state
+  directories. This daemon's own journal is among them, which costs nothing: the four handlers are
+  keyed by payload type, and a threshold episode matches none of them.
 - **The monitor stores no engine events.** It tails the journal only so `ServerSampler` learns that
   the instance list moved, and it starts at the **tail with no cursor**: a replayed event would
   trigger a resync the periodic floor was going to do anyway. Don't give this consumer a cursor or a

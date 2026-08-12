@@ -7,9 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the watch-list reacts to a native start again
+
+`instance_started` for a native server is the **supervisor's** event, written to its own journal, so
+the sampler's four lifecycle subscriptions were only half-served by a reader of the engine's journal
+alone. `AddKgsmJournalFederation` now runs after `AddKgsmServices` and every producer's journal is
+tailed. Nothing was broken by it — the resync floor re-derives the same watch-list — but the events
+exist to react sooner, and half of them were landing somewhere this daemon was not looking.
+
+⚠ The call must stay **after** `AddKgsmServices`: above it the single-journal registration wins,
+silently. This daemon's own journal is discovered along with the rest, which costs nothing — the four
+handlers are keyed by payload type and a threshold episode matches none of them.
+
+The AOT publish stays 0-warn: discovery and the federated source are file I/O and reflection-free.
+
 ### Changed
 
-- **kgsm-lib 4.23.0.** Picks up the journal writer's move into its own package
+- **kgsm-lib 4.23.1.** Picks up the journal writer's move into its own package
   (`TheKrystalShip.KGSM.Journal`), which this daemon resolves transitively — no source change, and the
   AOT publish stays 0-warn.
 
