@@ -223,6 +223,8 @@ internal sealed class CountingInstanceService : IInstanceService
     public ICollection<string> GetLogs(string instanceName, int maxLines = 10) => throw new NotImplementedException();
     public Task<ICollection<string>> GetLogsAsync(string instanceName, int maxLines = 10, CancellationToken cancellationToken = default) => throw new NotImplementedException();
     public KgsmResult GetStatus(string instanceName) => throw new NotImplementedException();
+    public KgsmResult CheckUpdate(string instanceName, bool json = false, string? actor = null, string? origin = null) => throw new NotImplementedException();
+    public KgsmResult DeleteBackup(string instanceName, string backupName, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public KgsmResult Kick(string instanceName, string target, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public KgsmResult Ban(string instanceName, string target, string? actor = null, string? origin = null) => throw new NotImplementedException();
     public KgsmResult Unban(string instanceName, string target, string? actor = null, string? origin = null) => throw new NotImplementedException();

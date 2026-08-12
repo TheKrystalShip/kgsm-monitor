@@ -24,6 +24,7 @@ public sealed class EpisodeRecorder(
     HistoryStore store,
     ConditionEvaluator evaluator,
     MonitorOptions options,
+    MonitorJournal journal,
     ILogger<EpisodeRecorder> logger) : BackgroundService
 {
     private static readonly TimeSpan DrainInterval = TimeSpan.FromSeconds(1);
@@ -77,6 +78,12 @@ public sealed class EpisodeRecorder(
 
         foreach (EpisodeTransition t in transitions)
         {
+            // The journal first: it is the record every surface reads, and the history database is this
+            // daemon's own working copy for the live episodes API. Recording before storing means a
+            // failure of the store cannot leave a fact that happened unrecorded, which is the direction
+            // that matters — the reverse would lose it.
+            journal.Record(t);
+
             if (t.ClosedTs is { } closedTs)
             {
                 await store.CloseEpisodeAsync(t.EpisodeId, closedTs, t.Value, t.PeakValue, t.Band,

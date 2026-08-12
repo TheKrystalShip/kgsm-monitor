@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — this daemon records the thresholds it measured
+
+`MonitorJournal` writes `host_threshold_breached` / `host_threshold_cleared` to this daemon's own
+event journal (`<history db directory>/events`) the moment an episode opens or closes. Nothing else on
+this host takes these measurements, so nothing else can honestly say a value crossed a line — the fact
+is now recorded where it happened, instead of another component polling it out of this database every
+30 seconds and transcribing it into its own store. Authority:
+`../event-journal-federation-plan.md` (Phase 5).
+
+- **An opening and a closing are two events**, because the journal is append-only and they are two
+  immutable facts. The mutable view of one condition over time is the alert feed, which answers a
+  different question. Both carry `OpenedTs`, so a reader can place the breach without holding the pair.
+- **Raw values only** — no summary sentence, no severity, no formatted number. Those are a domain-aware
+  reader's business, and putting one consumer's wording in the record would force it on every other.
+- ⚠ `CloseReason` travels on every close and must never be flattened into "recovered": a rule retuned,
+  disabled or removed closes an episode without the value ever being observed to come down.
+- The journal is written **before** the history database. A store failure then cannot leave a fact that
+  happened unrecorded, which is the direction that matters.
+
 ### Added
 - **Threshold episodes + `GET /thresholds/episodes`** — the durable record of what fired and for how long,
   as opposed to the live conditions on each frame. One row per continuous breach, carrying the peak reading
