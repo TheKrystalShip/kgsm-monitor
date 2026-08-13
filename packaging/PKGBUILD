@@ -55,6 +55,11 @@ package_kgsm-monitor() {
     cp -a "${stage}/." "${prefix}/"
     # A published tree carries build leftovers that a package should not.
     rm -f "${prefix}"/*.pdb "${prefix}"/*.dbg
+    # The eBPF object belongs to kgsm-monitor-net-meter, which installs it to this same prefix. The
+    # build stage holds it because CI compiles it there; leaving it here makes two packages own one
+    # file, which pacman refuses — and since net-meter depends on this package, that would make it
+    # uninstallable rather than merely conflicting.
+    rm -f "${prefix}/net_meter.bpf.o"
 
     install -Dm644 "${repo}/deploy/kgsm-monitor.service" \
         "${pkgdir}/usr/lib/systemd/system/kgsm-monitor.service"

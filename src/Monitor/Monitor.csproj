@@ -13,7 +13,7 @@
 
     <RootNamespace>TheKrystalShip.KGSM.Monitor</RootNamespace>
     <AssemblyName>kgsm-monitor</AssemblyName>
-    <Version>2.5.1</Version>
+    <Version>2.5.2</Version>
 
     <!-- Required by the source-generated [LibraryImport] sysconf(_SC_CLK_TCK) p/invoke in
          ProcTreeSampler (Slice 3). The generated marshalling stub uses unsafe; no hand-written
