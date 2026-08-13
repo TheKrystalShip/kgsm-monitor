@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — one machine-readable version, read rather than restated
+
+`deploy/version.sh` prints this project's version from the single file that declares it, and
+`--pkgver` prints the form pacman accepts (a `pkgver` may not contain a hyphen; ordering survives it,
+since `vercmp` puts `3.16.0rc3` before `3.16.0`). Packaging asks for a version instead of carrying a
+copy that can fall behind the binary.
+
+It reads `src/Monitor/Monitor.csproj` specifically: the package ships the daemon, and
+`Monitor.Contracts` is a separate artifact on its own version.
+
 ### Added — the deploy contract is files, not install-time script output
 
 `deploy/polkit/48-kgsm-monitor-deploy.rules.in` carries the headless-deploy grant as reviewable content, and

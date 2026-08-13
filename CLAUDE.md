@@ -174,7 +174,8 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
 
 ## Version tracking
 
-- **Version source:** `<Version>` in `src/Monitor/Monitor.csproj` (daemon) and `src/Monitor.Contracts/Monitor.Contracts.csproj` (NuGet contracts package — versioned independently)
+- **Version source:** `<Version>` in `src/Monitor/Monitor.csproj` (the daemon, and what the package ships) and `src/Monitor.Contracts/Monitor.Contracts.csproj` (NuGet contracts package — versioned independently)
+- **Packaging reads it via `deploy/version.sh`** — `./deploy/version.sh` prints the declared version, `--pkgver` prints the pacman-safe form. A package never restates a version number; it asks for one.
 - Bump the version whenever you make a user-facing change (new feature, bug fix, behaviour change). Patch for fixes, minor for new features, major for breaking changes.
 - Update `CHANGELOG.md` under `## [Unreleased]` with a brief entry for every meaningful change.
 - A git tag matching the new version should be created on release: `git tag v<version>`.
