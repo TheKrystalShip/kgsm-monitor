@@ -60,6 +60,11 @@ jobs:
       - name: Publish
         run: dotnet publish src/Monitor/Monitor.csproj -c Release -r linux-x64 -o artifacts/publish
 
+      # The source includes exactly two headers: linux/bpf.h from the kernel uapi (already present)
+      # and bpf/bpf_helpers.h, which is libbpf's. Arch has it via the libbpf package.
+      - name: Install the eBPF headers
+        run: sudo apt-get install -y libbpf-dev
+
       # Building the eBPF object here is what keeps clang off every node. The program is
       # deliberately not CO-RE — it touches only the uapi struct __sk_buff and needs no vmlinux.h —
       # so one object built here loads on any node's kernel. -g emits the BTF the typed map needs.
