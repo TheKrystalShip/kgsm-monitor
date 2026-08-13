@@ -1,0 +1,104 @@
+# Maintainer: Cristian Moraru <info@thekrystalship.com>
+#
+# Build from this directory:  cd packaging && makepkg
+#
+# Compiles nothing. CI publishes the Native-AOT binary first and this places the result, so the
+# packaged bytes are the tested bytes. Point KGSM_STAGE at that publish output, or leave it unset
+# to use ../artifacts/publish, which is where deploy.sh leaves one.
+#
+# Two packages from one build:
+#   kgsm-monitor            the daemon — unprivileged, and the whole product on a host without eBPF
+#   kgsm-monitor-net-meter  the eBPF per-server network meter — root-owned, optional
+
+pkgbase=kgsm-monitor
+pkgname=('kgsm-monitor' 'kgsm-monitor-net-meter')
+pkgver=2.5.0
+pkgrel=1
+arch=('x86_64')
+url="https://github.com/TheKrystalShip/kgsm-monitor"
+# This repo ships no LICENSE file. Set a real identifier here once it does.
+license=('LicenseRef-Unspecified')
+# No separate debug package: these are shipped to a private fleet, not a distro archive.
+options=('!debug')
+
+_stage() { printf '%s' "${KGSM_STAGE:-${startdir}/../artifacts/publish}"; }
+
+pkgver() {
+    "${startdir}/../deploy/version.sh" --pkgver
+}
+
+build() {
+    local stage; stage="$(_stage)"
+    [[ -f "${stage}/kgsm-monitor" ]] || {
+        printf '\n  no publish output at %s\n' "$stage" >&2
+        printf '  build it first:  dotnet publish src/Monitor/Monitor.csproj -c Release -r linux-x64 -o artifacts/publish\n' >&2
+        printf '  or point KGSM_STAGE at an existing one.\n\n' >&2
+        return 1
+    }
+}
+
+package_kgsm-monitor() {
+    pkgdesc="KGSM host and per-server metrics daemon"
+    groups=('kgsm-node')
+    depends=('systemd')
+    optdepends=(
+        'kgsm: lists instances, which is what gives per-server metrics a watch-list'
+        'kgsm-watchdog: owns kgsm.slice, where native servers live'
+        'kgsm-monitor-net-meter: per-server network rx/tx (without it those fields read null)'
+        'docker: sampling container-kind servers'
+    )
+
+    local repo="${startdir}/.." stage; stage="$(_stage)"
+    local prefix="${pkgdir}/opt/${pkgbase}"
+
+    # The AOT binary, its native sqlite lib and the settings file, exactly as published.
+    install -dm755 "$prefix"
+    cp -a "${stage}/." "${prefix}/"
+    # A published tree carries build leftovers that a package should not.
+    rm -f "${prefix}"/*.pdb "${prefix}"/*.dbg
+
+    install -Dm644 "${repo}/deploy/kgsm-monitor.service" \
+        "${pkgdir}/usr/lib/systemd/system/kgsm-monitor.service"
+
+    install -Dm644 "${repo}/deploy/sysusers.d/kgsm-monitor.conf" \
+        "${pkgdir}/usr/lib/sysusers.d/kgsm-monitor.conf"
+
+    # The leaf config descriptor, in the directory kgsm-api scans. Packaged rather than installed by
+    # a script, so it can never describe a different build than the one beside it.
+    install -Dm644 "${repo}/deploy/kgsm-monitor.leaf.json" \
+        "${pkgdir}/var/lib/kgsm/leaves/monitor.json"
+}
+
+package_kgsm-monitor-net-meter() {
+    pkgdesc="KGSM per-server network meter — eBPF cgroup/skb byte counter for kgsm-monitor"
+    arch=('any')   # a script plus an eBPF object; nothing here is x86_64-specific
+    depends=('kgsm-monitor' 'bpf')
+    optdepends=('kgsm-watchdog: owns kgsm.slice, the cgroup the meter attaches to')
+    install="kgsm-monitor-net-meter.install"
+
+    local repo="${startdir}/.." stage; stage="$(_stage)"
+
+    # Root-owned, both of them: the script loads and attaches BPF as root, and a root-executed file
+    # an unprivileged user can rewrite is an escalation path. Same reason kgsm-firewall keeps the
+    # classic layout.
+    install -Dm755 "${repo}/deploy/net-meter-setup.sh" \
+        "${pkgdir}/opt/${pkgbase}/net-meter-setup.sh"
+    install -Dm644 "${repo}/deploy/kgsm-net-meter.service" \
+        "${pkgdir}/usr/lib/systemd/system/kgsm-net-meter.service"
+
+    # The prebuilt eBPF object, so no node ever needs a compiler. The program is deliberately not
+    # CO-RE — it touches only the uapi struct __sk_buff and needs no vmlinux.h — so one object built
+    # anywhere loads on any node's kernel.
+    if [[ -f "${stage}/net_meter.bpf.o" ]]; then
+        install -Dm644 "${stage}/net_meter.bpf.o" "${pkgdir}/opt/${pkgbase}/net_meter.bpf.o"
+    elif [[ -f "${repo}/src/Monitor/bpf/net_meter.bpf.o" ]]; then
+        install -Dm644 "${repo}/src/Monitor/bpf/net_meter.bpf.o" "${pkgdir}/opt/${pkgbase}/net_meter.bpf.o"
+    else
+        # Without one the setup script falls back to clang, which makes clang a runtime dependency
+        # of a node. CI is expected to build the object; warn loudly rather than ship a package that
+        # quietly needs a compiler.
+        warning "no net_meter.bpf.o found — the installed meter will need clang on the host"
+        install -Dm644 "${repo}/src/Monitor/bpf/net_meter.bpf.c" \
+            "${pkgdir}/opt/${pkgbase}/net_meter.bpf.c"
+    fi
+}

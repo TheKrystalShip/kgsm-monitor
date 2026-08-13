@@ -1,0 +1,31 @@
+# Nothing here loads BPF or enables a unit.
+#
+# pacman's own hooks already create the service account, the state directories and reload the unit
+# files, so repeating that would be noise. Enabling is the administrator's call — the node bootstrap
+# does it.
+
+post_install() {
+    cat <<'MSG'
+
+  The network meter is installed but not attached.
+
+    systemctl enable --now kgsm-net-meter.service
+
+  It attaches to /sys/fs/cgroup/kgsm.slice, so kgsm-watchdog has to have created the slice first;
+  the unit is ordered after it and re-runs whenever the watchdog starts.
+
+  Until it runs, kgsm-monitor serves host metrics normally and reports per-server rxBps/txBps as
+  null — "not measured", which is the honest answer, never a fabricated 0.
+
+MSG
+}
+
+post_upgrade() {
+    cat <<'MSG'
+
+  The meter's programs are already loaded in the kernel; a new object takes effect after:
+
+    systemctl restart kgsm-net-meter.service
+
+MSG
+}

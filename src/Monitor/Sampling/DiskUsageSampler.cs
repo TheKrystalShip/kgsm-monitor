@@ -34,6 +34,14 @@ internal sealed class DiskUsageSampler
     public long? Get(string id) => _usage.TryGetValue(id, out long bytes) ? bytes : null;
 
     /// <summary>
+    /// Every measured footprint, whatever each instance's run state — the whole cache, which the
+    /// walk fills from the watch-list rather than from what is running. An instance with no readable
+    /// working dir is absent (never a 0). The returned map is the immutable one currently published,
+    /// so a caller can enumerate it without holding anything.
+    /// </summary>
+    public IReadOnlyDictionary<string, long> All => _usage;
+
+    /// <summary>
     /// Walk every instance in the current watch-list and rebuild the footprint cache,
     /// then swap it in atomically. Called only by the slow disk-usage loop (single writer),
     /// so the swap needs no lock. An instance whose working dir is empty/unreadable is left

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — an Arch package, built from the tested binaries
+
+`packaging/PKGBUILD` builds this project into a pacman package. It compiles nothing: CI publishes
+first and the recipe places that output, so the packaged bytes are the tested bytes. `pkgver()`
+reads `deploy/version.sh`, so the package never restates a version.
+
+The install prefix stays `/opt/<project>` — the same path `deploy.sh` uses — which is what lets the
+committed systemd unit ship verbatim instead of being rewritten at packaging time.
+
+Config files are listed in `backup=()`, so an upgrade writes `.pacnew` beside a file you edited
+rather than over it. The unit, the sysusers fragment and the leaf descriptor are packaged files, so
+the descriptor can never lag the binary it describes. Nothing is enabled by a scriptlet: pacman's
+own hooks handle the service account, the state directories and the daemon reload, and enabling a
+unit is the administrator's decision.
+
+It builds two packages: the daemon, and `kgsm-monitor-net-meter` carrying the eBPF meter's root-owned
+script, unit and prebuilt object. Splitting them keeps the meter optional on a host without eBPF,
+where the daemon still serves host metrics and reports per-server rx/tx as null.
+
+### Added — a stopped instance's disk footprint reaches a consumer (contracts 1.6.0)
+
+`Snapshot.serverDisks` carries one `{ id, diskBytes }` row per **watched** instance, whatever its run
+state. Every other per-server figure is read from a live cgroup or process tree, so `servers[]` holds
+running instances only — the slow directory walk already measured the whole watch-list, and a stopped
+instance's footprint was computed each cadence and discarded for want of a row to hang it on. Disk is
+a property of an instance's files, not of a run, so it is published as its own array.
+
+An instance whose working dir isn't readable stays absent (the honest "not measured"), never a row of
+0, and a running instance's `servers[].diskBytes` is the same value from the same cache.
+
 ### Added — one machine-readable version, read rather than restated
 
 `deploy/version.sh` prints this project's version from the single file that declares it, and

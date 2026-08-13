@@ -92,6 +92,26 @@ public sealed class ServerSampler(
         return all;
     }
 
+    /// <summary>
+    /// Every watched instance's on-disk footprint, independent of run state — the slow walk's whole
+    /// cache, turned into wire rows. <see cref="Sample"/> can only carry a footprint on a row that a
+    /// live cgroup or process tree produced, so a stopped instance's measurement would otherwise be
+    /// taken every cadence and thrown away; this is how it reaches a consumer. An instance whose
+    /// working dir isn't readable is absent, never a 0.
+    /// </summary>
+    public ServerDiskUsage[] SampleDiskUsage()
+    {
+        IReadOnlyDictionary<string, long> usage = _diskUsage.All;
+        if (usage.Count == 0)
+            return [];
+
+        var rows = new ServerDiskUsage[usage.Count];
+        int i = 0;
+        foreach ((string id, long bytes) in usage)
+            rows[i++] = new ServerDiskUsage(id, bytes);
+        return rows;
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         WireEvents();

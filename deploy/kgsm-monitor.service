@@ -21,11 +21,11 @@ ExecStart=/opt/kgsm-monitor/kgsm-monitor
 Environment=Monitor__SocketPath=/run/kgsm-monitor/metrics.sock
 Environment=Monitor__SocketMode=660
 
-# Per-server sampling ON: point at /usr/local/bin/kgsm — the canonical kgsm symlink every
+# Per-server sampling ON: point at /usr/bin/kgsm — the canonical kgsm entry point every
 # consumer shares (kgsm-watchdog points at the same path). Repoint that symlink to move the
 # whole host at once, no unit edits. Unset this to run host-only. ProtectHome is deliberately
 # NOT set — kgsm's instances/config live under /home and the daemon runs as that home's user.
-Environment=Monitor__KgsmPath=/usr/local/bin/kgsm
+Environment=Monitor__KgsmPath=/usr/bin/kgsm
 
 # The engine's append-only event journal, which the monitor TAILS for instance_* lifecycle
 # events — so a started/stopped server is reflected sub-second instead of after

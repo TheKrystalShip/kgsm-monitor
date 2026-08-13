@@ -101,7 +101,10 @@ public sealed class MetricsSampler(
             Sensors: _sensors.Sample(),
             Servers: _servers?.Sample() ?? [],
             Leaves: _leaves?.Sample() ?? [],
-            Conditions: []);
+            Conditions: [],
+            // Run-state-independent, so it is NOT derived from Servers above: an instance sitting
+            // stopped has no metrics row and still occupies its disk.
+            ServerDisks: _servers?.SampleDiskUsage() ?? []);
 
         // The rules are evaluated against the frame that is about to be published, and the verdict is folded
         // back into it — so a condition and the reading that produced it are never a tick apart, and a

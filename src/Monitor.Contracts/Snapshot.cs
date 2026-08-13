@@ -18,7 +18,8 @@ public sealed record Snapshot(
     SensorReading[] Sensors,  // hwmon temperatures (empty when none/absent — never invented)
     ServerMetrics[] Servers,  // per-KGSM-server cgroup metrics (empty when none running)
     LeafMetrics[] Leaves,     // per-KGSM-leaf cgroup metrics (empty when off/none running)
-    ConditionReading[] Conditions);  // threshold conditions currently breaching (empty when none/off)
+    ConditionReading[] Conditions,   // threshold conditions currently breaching (empty when none/off)
+    ServerDiskUsage[]? ServerDisks = null);  // on-disk footprint per WATCHED instance, running or not
 
 public sealed record CpuMetrics(double TotalPct, double[] PerCore, LoadAvg Load, CpuInfo? Info);
 
@@ -125,8 +126,9 @@ public sealed record SensorReading(string Chip, string? Label, double ValueC);
 /// sampled on a slow, separate cadence configured by the daemon (a directory walk, not the
 /// 1&#160;Hz tick) and conflated like the rest of the frame.
 /// Symlinks are not followed (no double-count). <c>null</c> when not yet walked or the
-/// directory can't be read — never a fabricated 0. Only attached to running servers
-/// (the frame lists running servers only), so a stopped server's footprint is absent.
+/// directory can't be read — never a fabricated 0. This array lists running servers only, so a
+/// stopped instance's footprint rides <see cref="Snapshot.ServerDisks"/> instead — the same
+/// measurement, from the same cache, published for every watched instance.
 /// </param>
 /// <param name="RxBps">
 /// Per-server network <em>receive</em> throughput in bytes/sec, measured by a passive eBPF
@@ -152,6 +154,29 @@ public sealed record ServerMetrics(
     long? DiskBytes,
     long? RxBps,
     long? TxBps);
+
+/// <summary>
+/// One watched instance's on-disk footprint, published <em>independently of run state</em>.
+/// <para>
+/// Every other per-server figure is a runtime reading and exists only while the server runs:
+/// <see cref="ServerMetrics"/> is produced from a live cgroup or process tree, so a stopped instance
+/// has no row there at all. Disk is the exception — the footprint of an installed instance is a
+/// property of its files, measured by the same slow directory walk whether or not anything is
+/// running — so it is published here for the whole watch-list rather than being lost with the row
+/// that never existed. A surface can therefore show what an instance occupies without first asking
+/// whether it is up.
+/// </para>
+/// <para>
+/// An instance whose working directory can't be read is <em>absent</em> from the array (the
+/// honest "not measured"), never a row of 0. The value is identical to the running row's
+/// <see cref="ServerMetrics.DiskBytes"/> — one cache feeds both.
+/// </para>
+/// </summary>
+/// <param name="Id">Stable instance name — the same join key <see cref="ServerMetrics.Id"/> uses.</param>
+/// <param name="DiskBytes">Apparent total size (sum of file lengths) of the instance's working
+/// directory, symlinks not followed. See <see cref="ServerMetrics.DiskBytes"/> for the full
+/// measurement contract.</param>
+public sealed record ServerDiskUsage(string Id, long DiskBytes);
 
 /// <summary>
 /// Per-KGSM-leaf resource usage, read from the cgroup v2 counters of the systemd unit each leaf runs as.

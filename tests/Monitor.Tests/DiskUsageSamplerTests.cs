@@ -116,4 +116,25 @@ public class DiskUsageSamplerTests : IDisposable
         Assert.Null(sampler.Get("nodir"));   // unreadable working dir → absent, not 0
         Assert.Null(sampler.Get("unknown")); // never in the watch-list
     }
+
+    // The whole cache is what reaches a consumer as Snapshot.ServerDisks, and it is built from the
+    // WATCH-LIST, not from what is running — which is the entire reason a stopped instance can be
+    // shown occupying disk. An unreadable working dir stays absent here too.
+    [Fact]
+    public void All_exposes_every_measured_instance_regardless_of_run_state()
+    {
+        Write("install/game", 4096);
+        var sampler = new DiskUsageSampler();
+
+        Assert.Empty(sampler.All); // never refreshed yet
+
+        sampler.Refresh(new Dictionary<string, Instance>
+        {
+            ["stopped"] = new Instance { Name = "stopped", WorkingDir = _root },
+            ["nodir"] = new Instance { Name = "nodir", WorkingDir = "/no/such/path" },
+        });
+
+        Assert.Equal(4096L, Assert.Contains("stopped", sampler.All));
+        Assert.DoesNotContain("nodir", sampler.All);
+    }
 }
