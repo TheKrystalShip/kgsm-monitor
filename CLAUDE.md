@@ -137,11 +137,12 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
   `null` means "not measured": io without `IOAccounting=yes`, `diskBytes` before the first walk,
   `rxBps`/`txBps` when un-metered or the cgroup is outside `kgsm.slice`. Never substitute 0.
 - **`Monitor.Contracts` is a separately-packed NuGet** consumed by kgsm-api. **Bump its
-  `<Version>` on ANY change to `Snapshot.cs` or the JSON context** — NuGet caches by id+version,
-  so a same-version repack serves a stale dll to kgsm-api. Compatibility is additive-only
-  (consumers ignore unknown fields/`kind`s); see `docs/integration.md §7`.
+  `<Version>` on ANY change to `Snapshot.cs` or the JSON context**, publish it, then move kgsm-api's
+  pin — a published version is immutable, so a change reaches a consumer only under a new number.
+  Compatibility is additive-only (consumers ignore unknown fields/`kind`s); see
+  `docs/integration.md §7`.
 - **kgsm-lib version is pinned and load-bearing** (`3.0.0` in `Monitor.csproj`). It resolves
-  from the local feed in `nuget.config` (`/home/heisen/local-nuget`) before publish. The pin
+  from the org's GitHub Packages feed in `nuget.config` before publish. The pin
   matters: `1.5.0` modelled `Instance.ports` as a string, but kgsm now emits a structured array,
   so an old pin throws on the detailed instance-list JSON and leaves `servers` permanently `[]`.
 - **The monitor owns exactly one socket.** `Monitor__SocketPath` (`metrics.sock`, default
