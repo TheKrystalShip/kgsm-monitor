@@ -63,11 +63,18 @@ jobs:
       # Building the eBPF object here is what keeps clang off every node. The program is
       # deliberately not CO-RE — it touches only the uapi struct __sk_buff and needs no vmlinux.h —
       # so one object built here loads on any node's kernel. -g emits the BTF the typed map needs.
+      # -target bpf stops clang searching the host's arch headers, and Debian/Ubuntu keep them
+      # under a multiarch directory rather than /usr/include/asm — so linux/types.h fails on
+      # asm/types.h without this -I. A distro that puts them directly in /usr/include needs no flag,
+      # which is why this compiles unaided on Arch.
       - name: Compile the network meter
         run: |
-          clang -O2 -g -target bpf -c src/Monitor/bpf/net_meter.bpf.c \
+          clang -O2 -g -target bpf \
+            -I"/usr/include/$(uname -m)-linux-gnu" \
+            -c src/Monitor/bpf/net_meter.bpf.c \
             -o artifacts/publish/net_meter.bpf.o
           test -s artifacts/publish/net_meter.bpf.o
+          file artifacts/publish/net_meter.bpf.o | grep -q eBPF
 
       - uses: actions/upload-artifact@v4
         with:
