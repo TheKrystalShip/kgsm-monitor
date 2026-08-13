@@ -142,3 +142,7 @@ with no cgroup are read from the `/proc` ppid tree (one gated scan, summed CPU/R
 server read `cpuPctCore≈100`, confirming the `sysconf(_SC_CLK_TCK)` p/invoke under Native
 AOT). Per-native scan ≈ 3.4 ms, flat in native-server count and gated to zero when none
 exist. See **[PLAN.md](PLAN.md)**.
+
+## License
+
+GNU General Public License v3.0 or later. See [LICENSE](LICENSE).

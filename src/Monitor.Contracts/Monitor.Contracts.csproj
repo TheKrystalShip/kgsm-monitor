@@ -27,7 +27,7 @@
     <Version>1.6.0</Version>
     <Authors>Heisenberg</Authors>
     <Description>Shared wire contract (the Snapshot DTO graph + its source-generated camelCase System.Text.Json context) for the kgsm-monitor GET /metrics endpoint. Referenced by kgsm-monitor (the producer) and consumed by kgsm-api (the aggregator) so the metrics contract is solid at build time.</Description>
-    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/TheKrystalShip/KGSM-Monitor</PackageProjectUrl>
     <RepositoryUrl>https://github.com/TheKrystalShip/KGSM-Monitor</RepositoryUrl>
     <RepositoryType>GitHub</RepositoryType>

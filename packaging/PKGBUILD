@@ -16,8 +16,7 @@ pkgver=2.5.0
 pkgrel=1
 arch=('x86_64')
 url="https://github.com/TheKrystalShip/kgsm-monitor"
-# This repo ships no LICENSE file. Set a real identifier here once it does.
-license=('LicenseRef-Unspecified')
+license=('GPL-3.0-or-later')
 # No separate debug package: these are shipped to a private fleet, not a distro archive.
 options=('!debug')
 
@@ -67,6 +66,8 @@ package_kgsm-monitor() {
     # a script, so it can never describe a different build than the one beside it.
     install -Dm644 "${repo}/deploy/kgsm-monitor.leaf.json" \
         "${pkgdir}/var/lib/kgsm/leaves/monitor.json"
+
+    install -Dm644 "${repo}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }
 
 package_kgsm-monitor-net-meter() {
@@ -101,4 +102,6 @@ package_kgsm-monitor-net-meter() {
         install -Dm644 "${repo}/src/Monitor/bpf/net_meter.bpf.c" \
             "${pkgdir}/opt/${pkgbase}/net_meter.bpf.c"
     fi
+    install -Dm644 "${repo}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+
 }
