@@ -52,7 +52,7 @@ The monitor listens on a **unix domain socket** speaking ordinary **HTTP/1.1**. 
 - **Default perms:** `0660`, owner+group read/write. To scrape it your process must run as
   the socket's **owner or be in its group** (typically root runs the monitor; you add the
   API's user to a shared group — see the `Group=` recipe in
-  `src/Monitor/deploy/kgsm-monitor.service`).
+  `deploy/kgsm-monitor.service`).
 - **This is the monitor's only socket.** Engine events reach the monitor from a file it reads
   (`KGSM_MONITOR_KGSM_JOURNAL`, default `/var/lib/kgsm/events`), not a socket it binds — so
   there is nothing else here to confuse it with. Always scrape `KGSM_MONITOR_SOCKET`.

@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the deploy contract is files, not install-time script output
+
+`deploy/polkit/48-kgsm-monitor-deploy.rules.in` carries the headless-deploy grant as reviewable content, and
+`setup.sh` renders the deploying user and unit list into it instead of embedding the rule in a
+heredoc — what a host is granted can now be read without running anything.
+
+`deploy/sysusers.d/kgsm-monitor.conf` declares the `kgsm` service account so a packaged install provisions it
+declaratively rather than relying on an account that happens to exist.
+
+`deploy/kgsm-monitor.requires.json` states every host command, peer service and kernel feature this project
+needs — each with its Arch package name, a probe that proves it works, and, for anything optional,
+what is lost without it.
+
+### Changed — the committed unit names the service account, not a developer
+
+`User=`/`Group=` read `kgsm`, the account `sysusers.d` declares. `render_unit()` still substitutes
+the deploying user at install time, so a dev-host deploy is unchanged.
+
+### Fixed — the network meter re-arms when the watchdog starts
+
+`kgsm-net-meter.service` gains `WantedBy=kgsm-watchdog.service`. `PartOf=` propagates the watchdog's
+stop and its restart but never its start, so a stop followed by a separate start left the oneshot
+down until the next reboot — and a `kgsm.slice` torn down and recreated in between has no programs
+attached to it.
+
+Its `ExecStart` is the installed `/opt/kgsm-monitor/net-meter-setup.sh` instead of a path inside a
+developer's checkout, and `setup_project_extras` now installs the script, the unit and any prebuilt
+`net_meter.bpf.o` — root-owned, because the script loads BPF as root and a root-executed file an
+unprivileged user can rewrite is an escalation path. It is skipped cleanly, with the daemon still
+serving host metrics, when `bpftool` is absent or `KGSM_SKIP_NET_METER=1`.
+
+`net-meter-setup.sh` defaults `MONITOR_USER` to `kgsm` rather than a developer's login.
+
+### Changed — units live in `deploy/`
+
+`kgsm-monitor.service`, `kgsm-net-meter.service` and `net-meter-setup.sh` move from
+`src/Monitor/deploy/` to `deploy/`, so `render_unit()` uses the same path every other repo does.
+
 ### Fixed — the watch-list reacts to a native start again
 
 `instance_started` for a native server is the **supervisor's** event, written to its own journal, so

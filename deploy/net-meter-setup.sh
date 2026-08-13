@@ -12,11 +12,12 @@
 # orchestrator runs with sudo; it is wrapped by deploy/kgsm-net-meter.service so the
 # attach is re-established on boot and whenever kgsm-watchdog (re)starts.
 #
-# ── Host prerequisites (install once) ────────────────────────────────────────────
-#   Arch packages:  bpf  (provides bpftool)  +  libbpf  (provides bpf/bpf_helpers.h)
-#                   and clang (already present on this host) to compile the .bpf.c.
-#   Kernel:         cgroup v2 (this host), BTF at /sys/kernel/btf/vmlinux, bpffs at
-#                   /sys/fs/bpf. All confirmed present.
+# ── Host prerequisites ───────────────────────────────────────────────────────────
+#   Always:   bpf (provides bpftool); a cgroup v2 host with bpffs mountable at /sys/fs/bpf
+#             and BTF at /sys/kernel/btf/vmlinux.
+#   Only to COMPILE: clang + libbpf (bpf/bpf_helpers.h). A host given a prebuilt
+#             net_meter.bpf.o needs neither — the program is not CO-RE (uapi struct
+#             __sk_buff only, no vmlinux.h), so one object built anywhere loads anywhere.
 #
 # ── Contract A (FIXED — the monitor's NetworkCgroupSource depends on these) ───────
 #   pin   : /sys/fs/bpf/kgsm/net_metrics   (BPF_MAP_TYPE_LRU_HASH, max_entries 1024)
@@ -34,7 +35,7 @@ MAP_PIN="$BPF_DIR/net_metrics"                # CONTRACT path — must not chang
 PROG_DIR="$BPF_DIR/progs"                     # where the two programs are pinned
 SLICE="${KGSM_SLICE:-/sys/fs/cgroup/kgsm.slice}"   # the stable parent cgroup
 MONITOR_BIN="${KGSM_MONITOR_BIN:-/opt/kgsm-monitor/kgsm-monitor}"
-MONITOR_USER="${KGSM_MONITOR_USER:-heisen}"   # the user the monitor runs as (reads the map)
+MONITOR_USER="${KGSM_MONITOR_USER:-kgsm}"   # the user the monitor runs as (reads the map)
 
 # The eBPF source + (optional) prebuilt object. Searched relative to this script first,
 # then a couple of install locations, so the script works from the source tree AND once
@@ -42,14 +43,14 @@ MONITOR_USER="${KGSM_MONITOR_USER:-heisen}"   # the user the monitor runs as (re
 SRC=""
 OBJ=""
 for cand in \
-    "$HERE/../bpf/net_meter.bpf.c" \
+    "$HERE/../src/Monitor/bpf/net_meter.bpf.c" \
     "$HERE/net_meter.bpf.c" \
     "/opt/kgsm-monitor/net_meter.bpf.c"; do
     [[ -f "$cand" ]] && { SRC="$cand"; break; }
 done
 for cand in \
     "${KGSM_BPF_OBJ:-}" \
-    "$HERE/../bpf/net_meter.bpf.o" \
+    "$HERE/../src/Monitor/bpf/net_meter.bpf.o" \
     "$HERE/net_meter.bpf.o" \
     "/opt/kgsm-monitor/net_meter.bpf.o"; do
     [[ -n "$cand" && -f "$cand" ]] && { OBJ="$cand"; break; }

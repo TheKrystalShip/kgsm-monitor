@@ -118,7 +118,7 @@ On an unprovisioned host it stops before building and tells you to run `setup.sh
 service user, never as root.
 
 To let a non-root API read the socket, see the `Group=` recipe in
-`src/Monitor/deploy/kgsm-monitor.service`.
+`deploy/kgsm-monitor.service`.
 
 ## Status
 

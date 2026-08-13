@@ -10,8 +10,8 @@ Type=simple
 # OWNS and creates them), this user's /proc, and /sys. It also spawns kgsm.sh, which MUST
 # run as the KGSM user to enumerate that user's instances. uid/gid 1000 = the KGSM user,
 # matching kgsm-watchdog's KGSM_WATCHDOG_UID/GID. Adjust both lines for a different host.
-User=heisen
-Group=heisen
+User=kgsm
+Group=kgsm
 
 # Native-AOT single-file binary (publish: dotnet publish src/Monitor -c Release -r linux-x64).
 ExecStart=/opt/kgsm-monitor/kgsm-monitor
@@ -70,7 +70,7 @@ RestrictAddressFamilies=AF_UNIX
 # Per-server network (Phase 1): the monitor reads the pinned eBPF net-meter map via bpf(),
 # which this host gates behind cap_bpf (kernel.unprivileged_bpf_disabled=2). With
 # NoNewPrivileges=true a setcap'd file capability would be IGNORED, so we grant the cap the
-# systemd-native way: AmbientCapabilities raises CAP_BPF into the (User=heisen) service and
+# systemd-native way: AmbientCapabilities raises CAP_BPF into the (User=kgsm) service and
 # survives the uid switch, and it's compatible with NoNewPrivileges. The bounding set is
 # narrowed to just CAP_BPF (read-flavoured: cannot modify networking, isn't root). If the
 # net-meter isn't set up (deploy/kgsm-net-meter.service not run), the monitor simply reports

@@ -1,0 +1,39 @@
+{
+  "project": "kgsm-monitor",
+  "leafId": "monitor",
+  "role": "leaf",
+  "runtime": {
+    "kind": "native-aot",
+    "note": "A single native binary. The host needs no .NET runtime."
+  },
+  "commands": [
+    { "name": "systemctl", "package": "systemd", "required": true, "probe": "systemctl --version", "why": "resolves the systemd kind of a watched server" },
+
+    { "name": "kgsm",    "package": "kgsm",   "required": false, "probe": "kgsm --version",  "why": "lists instances so per-server metrics have a watch-list (Monitor__KgsmPath)", "without": "host metrics are served in full; the servers array stays empty" },
+    { "name": "docker",  "package": "docker", "required": false, "probe": "docker --version", "why": "identifies container-kind servers", "without": "container servers are not sampled; native and systemd ones are" },
+    { "name": "bpftool", "package": "bpf",    "required": false, "probe": "bpftool version",  "why": "loads and attaches the eBPF per-server network meter", "without": "rxBps/txBps report null — 'not measured', never a fabricated 0" },
+    { "name": "clang",   "package": "clang",  "required": false, "probe": "clang --version",  "why": "compiles net_meter.bpf.c when no prebuilt object is installed", "without": "nothing, provided net_meter.bpf.o ships beside the binary — which is the packaged case" }
+  ],
+  "services": [
+    { "name": "kgsm-watchdog.service", "required": false, "why": "owns kgsm.slice, the cgroup the network meter attaches to and where native servers live", "without": "native per-server metrics are unavailable; host metrics are unaffected" }
+  ],
+  "system": [
+    { "feature": "cgroup-v2",    "required": true,  "probe": "test -f /sys/fs/cgroup/cgroup.controllers", "why": "per-server cpu/memory/io are read from cgroup v2 files" },
+    { "feature": "proc",         "required": true,  "probe": "test -d /proc/1",                            "why": "every host metric is read from /proc and /sys" },
+    { "feature": "bpffs",        "required": false, "probe": "test -d /sys/fs/bpf",                        "why": "the network meter pins its map at /sys/fs/bpf/kgsm/net_metrics", "without": "no per-server network metrics" },
+    { "feature": "btf",          "required": false, "probe": "test -f /sys/kernel/btf/vmlinux",            "why": "the typed BPF map needs BTF to load", "without": "no per-server network metrics" },
+    { "feature": "cap-bpf",      "required": false, "probe": "capsh --print | grep -q cap_bpf",            "why": "granted to the daemon as AmbientCapabilities=CAP_BPF so it can read the pinned map", "warning": "NoNewPrivileges=true makes a setcap'd FILE capability ignored, and a package upgrade drops file capabilities anyway. The unit's AmbientCapabilities is the only grant that works." }
+  ],
+  "units": {
+    "system": ["kgsm-monitor.service", "kgsm-net-meter.service"],
+    "user": [],
+    "note": "kgsm-net-meter.service and its setup script stay ROOT-owned: the script loads and attaches BPF as root, and a root-executed file an unprivileged user can rewrite is an escalation path. It is installed by setup.sh, never by deploy.sh, and is deliberately absent from UNITS=."
+  },
+  "paths": {
+    "prefix": "/opt/kgsm-monitor",
+    "state": ["/var/lib/kgsm-monitor"],
+    "runtime": ["/run/kgsm-monitor"],
+    "config": ["/etc/kgsm-monitor/kgsm-monitor.env"],
+    "descriptor": "/var/lib/kgsm/leaves/monitor.json"
+  }
+}

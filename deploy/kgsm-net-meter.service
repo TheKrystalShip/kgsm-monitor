@@ -16,12 +16,16 @@ Type=oneshot
 # and so PartOf= stop/restart semantics track it as a unit of the watchdog.
 RemainAfterExit=yes
 
-# Must run as root: load/attach BPF, setcap the monitor, set bpffs perms. This is the ONE
-# privileged piece of the per-server-network feature; the monitor itself stays User=heisen.
-# Adjust the path if the source tree lives elsewhere; the script also accepts overrides via
-# KGSM_BPF_DIR / KGSM_SLICE / KGSM_MONITOR_BIN / KGSM_MONITOR_USER (see the script header).
-ExecStart=/home/heisen/tks/kgsm-monitor/src/Monitor/deploy/net-meter-setup.sh
+# Must run as root: load/attach BPF, set bpffs perms. This is the ONE privileged piece of the
+# per-server-network feature; the monitor itself runs unprivileged and reads the pinned map with
+# AmbientCapabilities=CAP_BPF. The script is installed beside the binary by deploy.sh and accepts
+# KGSM_BPF_DIR / KGSM_SLICE / KGSM_MONITOR_BIN / KGSM_MONITOR_USER overrides (see its header).
+ExecStart=/opt/kgsm-monitor/net-meter-setup.sh
 
 [Install]
-# Run at boot so the meter is attached before/independently of an interactive session.
-WantedBy=multi-user.target
+# Two wants, because they answer different questions. multi-user covers a boot with no watchdog
+# yet. kgsm-watchdog covers every later start of the watchdog: PartOf= above propagates its STOP
+# and its restart, but never its start, so without this a stop followed by a separate start
+# leaves the meter down until the next reboot — and a kgsm.slice that was torn down and recreated
+# in between has no programs attached to it.
+WantedBy=multi-user.target kgsm-watchdog.service

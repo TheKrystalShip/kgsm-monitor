@@ -54,10 +54,9 @@ LEAF_DESCRIPTOR="${REPO_DIR}/deploy/${PROJECT}.leaf.json"
 # the kgsm- prefix, but NOT always: kgsm-llm ships the leaf "assistant". State it, don't derive it.
 LEAF_ID="${PROJECT#kgsm-}"
 
-# The monitor's unit lives beside its project, not under deploy/.
 render_unit() {   # $1 = unit filename
     sed "s/^User=.*/User=${DEPLOY_USER}/; s/^Group=.*/Group=${DEPLOY_GROUP}/" \
-        "${REPO_DIR}/src/Monitor/deploy/$1"
+        "${REPO_DIR}/deploy/$1"
 }
 
 # Health is HTTP-over-unix-socket; the path matches the unit's KGSM_MONITOR_SOCKET default.
@@ -65,10 +64,51 @@ MON_SOCK="${MON_SOCK:-/run/kgsm-monitor/metrics.sock}"
 health_probe() {
     curl -fsS -o /dev/null --max-time 2 --unix-socket "$MON_SOCK" http://localhost/health 2>/dev/null
 }
-# Anything else one-shot and privileged this project needs provisioned. setup.sh calls it once
-# the units are live; deploy.sh never does. Keep it idempotent — setup.sh is re-runnable. Use
-# "$SUDO" for privileged steps. Default: nothing to do.
-setup_project_extras() { :; }
+# The eBPF per-server network meter. Its setup script runs as ROOT to load and attach the
+# program, so both the script and its unit stay root-owned — a root-executed file an
+# unprivileged user can rewrite is an escalation path, which is the same reason kgsm-firewall
+# keeps the classic layout. That is also why this lives here and not in UNITS=: deploy.sh
+# installs units unprivileged into a directory the deploying user owns, and this one must not
+# be writable by them. The monitor itself stays unprivileged and reads the pinned map with
+# AmbientCapabilities=CAP_BPF.
+#
+# Skipping it is a supported configuration: the monitor runs normally and reports rxBps/txBps
+# as null — "not measured", never a fabricated 0. Set KGSM_SKIP_NET_METER=1 on a host with no
+# eBPF support.
+NET_METER_UNIT="kgsm-net-meter.service"
+NET_METER_SCRIPT="${PREFIX}/net-meter-setup.sh"
+
+setup_project_extras() {
+    if [[ "${KGSM_SKIP_NET_METER:-0}" == "1" ]]; then
+        log "skipping the eBPF network meter (KGSM_SKIP_NET_METER=1) — rxBps/txBps will read null"
+        return 0
+    fi
+
+    if ! command -v bpftool > /dev/null 2>&1; then
+        warn "bpftool not found — skipping the eBPF network meter (install the Arch 'bpf' package)"
+        warn "the monitor still runs; per-server rxBps/txBps will read null until you re-run this"
+        return 0
+    fi
+
+    log "installing the net meter script → ${NET_METER_SCRIPT} (root-owned)"
+    $SUDO install -m 0755 -o root -g root "${REPO_DIR}/deploy/net-meter-setup.sh" "$NET_METER_SCRIPT"
+
+    # A prebuilt object means the host needs no compiler. Without one the script falls back to
+    # clang against the checked-in .c, which is the development path.
+    local obj="${REPO_DIR}/src/Monitor/bpf/net_meter.bpf.o"
+    if [[ -f "$obj" ]]; then
+        log "installing the prebuilt BPF object → ${PREFIX}/net_meter.bpf.o"
+        $SUDO install -m 0644 -o root -g root "$obj" "${PREFIX}/net_meter.bpf.o"
+    fi
+
+    log "installing ${NET_METER_UNIT} → ${SYSTEMD_DIR}/${NET_METER_UNIT} (root-owned)"
+    $SUDO install -m 0644 -o root -g root \
+        "${REPO_DIR}/deploy/${NET_METER_UNIT}" "${SYSTEMD_DIR}/${NET_METER_UNIT}"
+
+    $SUDO systemctl daemon-reload
+    log "enabling + starting ${NET_METER_UNIT}"
+    $SUDO systemctl enable --now "$NET_METER_UNIT"
+}
 # ── END PROJECT BLOCK ─────────────────────────────────────────────────────────
 
 # ── Derived paths (do not edit) ───────────────────────────────────────────────
@@ -82,6 +122,28 @@ SYSTEMD_DIR="/etc/systemd/system"
 # The polkit grant setup.sh installs: lets DEPLOY_USER drive systemctl for THIS project's units
 # with no password and no interactive auth agent.
 POLKIT_DST="/etc/polkit-1/rules.d/48-${PROJECT}-deploy.rules"
+
+# The polkit rule's CONTENT is a committed file, not a heredoc, so what the host grants can be
+# read and reviewed without running anything. Only the deploying user and the unit list cannot be
+# known until install time, and those are the template's two placeholders.
+POLKIT_TEMPLATE="${REPO_DIR}/deploy/polkit/48-${PROJECT}-deploy.rules.in"
+
+render_polkit_rule() {
+    [[ -f "$POLKIT_TEMPLATE" ]] || { err "missing polkit template: ${POLKIT_TEMPLATE}"; return 1; }
+
+    local units_js="" u
+    for u in "${UNITS[@]}"; do
+        units_js+="        \"${u}\": true,"$'\n'
+    done
+    units_js="${units_js%$'\n'}"
+
+    local rendered
+    rendered="$(< "$POLKIT_TEMPLATE")"
+    rendered="${rendered//@PROJECT@/${PROJECT}}"
+    rendered="${rendered//@DEPLOY_USER@/${DEPLOY_USER}}"
+    rendered="${rendered//@UNITS@/${units_js}}"
+    printf '%s\n' "$rendered"
+}
 
 SERVICE="${UNITS[0]}"           # the primary unit, e.g. kgsm-api.service
 PUBLISH_DIR="${REPO_DIR}/artifacts/publish"
