@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.3] - 2026-08-16
+
+### Fixed — the net meter reports success when it loads a prebuilt eBPF object
+
+`net-meter-setup.sh` staged a freshly compiled object in a tempfile and removed it from an EXIT
+trap whose last command was the guard itself. An EXIT trap's status is the script's exit status,
+so on the prebuilt-object path — where the tempfile variable is empty and the guard is false —
+a fully successful setup handed systemd a `1`. The unit reported `failed` with every step of
+its own output showing the meter attached and ready.
+
 ## [2.5.2] - 2026-08-14
 
 ### Fixed — kgsm-monitor and kgsm-monitor-net-meter no longer claim the same file

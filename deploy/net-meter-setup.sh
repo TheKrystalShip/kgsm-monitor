@@ -74,7 +74,14 @@ fi
 # transiently — once bpftool loads it the kernel holds the programs (pinned), so a
 # freshly compiled object is staged in a tempfile and removed afterwards.
 TMP_OBJ=""
-cleanup() { [[ -n "$TMP_OBJ" && -f "$TMP_OBJ" ]] && rm -f "$TMP_OBJ"; }
+# An EXIT trap's status is the script's exit status, so this must return 0 when there is
+# nothing to clean up — with a prebuilt object TMP_OBJ is empty, and a bare `[[ ]] && rm`
+# would hand systemd a failure after a fully successful setup.
+cleanup() {
+    if [[ -n "$TMP_OBJ" && -f "$TMP_OBJ" ]]; then
+        rm -f "$TMP_OBJ"
+    fi
+}
 trap cleanup EXIT
 
 if [[ -z "$OBJ" ]]; then
