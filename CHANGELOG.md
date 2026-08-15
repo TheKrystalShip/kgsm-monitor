@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] - 2026-08-16
+
+### Fixed — federation cannot be registered in the wrong order
+
+kgsm-lib 4.30.0 makes `AddKgsmServices` and `AddKgsmJournalFederation` register the same resolution
+rule, so either call order yields a federated reader. ⚠ **The bug it removes had no symptom**: a
+consumer that federated too early kept reading the engine's journal *successfully* — healthy journal,
+quiet host, nothing to catch — while every other producer's events sat in files it never opened.
+`JournalDiscovery` also scans once per process now, instead of once for the history reader and again
+for the live tail.
+
 ## [2.6.0] - 2026-08-16
 
 ### Changed — being a journal producer is derived, not wired here
