@@ -1,4 +1,3 @@
-using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Extensions;
 using TheKrystalShip.KGSM.Monitor;
@@ -6,7 +5,6 @@ using TheKrystalShip.KGSM.Monitor.Contracts;
 using TheKrystalShip.KGSM.Monitor.History;
 using TheKrystalShip.KGSM.Monitor.Sampling;
 using TheKrystalShip.KGSM.Monitor.Thresholds;
-using TheKrystalShip.KGSM.Services;
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
@@ -141,35 +139,18 @@ if (options.HistoryEnabled)
 // because "this host keeps no record of what fired" is found out at the worst moment otherwise.
 if (options.ThresholdsEnabled && options.HistoryEnabled)
 {
-    // This daemon's own event journal, beside its history database. Nothing else on this host takes
-    // these measurements, so nothing else can honestly say a value crossed a line — recording them here
-    // puts the fact where it happened, instead of leaving another component to poll them out of a
-    // database and transcribe them into its own store. The producer id is the state directory's own
-    // name, which is what a reader scans for, so writer and readers agree on the location without
-    // either being told.
-    builder.Services.AddSingleton<IEventJournalWriter>(sp => new EventJournalWriter(
-        new EventJournalWriterOptions
-        {
-            Producer = "kgsm-monitor",
-            Directory = Path.Combine(
-                Path.GetDirectoryName(options.HistoryDbPath) ?? "/var/lib/kgsm-monitor", "events"),
-            ProducerVersion = typeof(Program).Assembly.GetName().Version?.ToString(),
-        },
-        sp.GetRequiredService<ILogger<EventJournalWriter>>()));
+    // This daemon's own event journal. Nothing else on this host takes these measurements, so nothing
+    // else can honestly say a value crossed a line — recording them here puts the fact where it
+    // happened, instead of leaving another component to poll them out of a database and transcribe
+    // them into its own store.
+    //
+    // The producer id decides everything else: the directory a reader scans for, the version stamped
+    // on every event, and the directory's creation during startup rather than on the first episode —
+    // a daemon that has simply not breached anything yet would otherwise be indistinguishable from one
+    // that writes no journal at all, and would stay invisible until both an episode fired and every
+    // reader restarted.
+    builder.Services.AddKgsmJournal("kgsm-monitor", typeof(Program).Assembly);
     builder.Services.AddSingleton<MonitorJournal>();
-
-    // Create the journal directory now rather than on the first episode. A reader discovers a producer
-    // by finding its journal, so a daemon that has simply not breached anything yet would otherwise be
-    // indistinguishable from one that does not write a journal at all — and would stay invisible until
-    // both an episode fired and every reader restarted.
-    string journalDir = Path.Combine(
-        Path.GetDirectoryName(options.HistoryDbPath) ?? "/var/lib/kgsm-monitor", "events");
-    try { Directory.CreateDirectory(journalDir); }
-    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-    {
-        // Not fatal: the writer retries on every append and says so if it still cannot.
-        Console.Error.WriteLine($"<4>could not create the event journal directory {journalDir}: {ex.Message}");
-    }
 
     builder.Services.AddHostedService<EpisodeRecorder>();
 }

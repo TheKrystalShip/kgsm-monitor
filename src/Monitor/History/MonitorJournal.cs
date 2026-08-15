@@ -1,7 +1,7 @@
-using System.Globalization;
 using System.Text.Json;
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Monitor.Thresholds;
+using TheKrystalShip.KGSM.Services;
 
 namespace TheKrystalShip.KGSM.Monitor.History;
 
@@ -29,22 +29,14 @@ namespace TheKrystalShip.KGSM.Monitor.History;
 /// every other. The Control Panel's phrasing and a chat surface's are allowed to differ.
 /// </para>
 /// <para>
-/// Best-effort: a failed write is logged by the writer and reported false. The episode is already in the
-/// history database either way, and failing the drain because recording it did not work would trade a
-/// missing line for a stalled recorder.
+/// Best-effort, and the base decides what that means: a failed write is logged and reported, never
+/// thrown. The episode is already in the history database either way, and failing the drain because
+/// recording it did not work would trade a missing line for a stalled recorder.
 /// </para>
 /// </remarks>
 public sealed class MonitorJournal(IEventJournalWriter writer, ILogger<MonitorJournal> logger)
+    : JournalRecorder(writer, logger)
 {
-    /// <summary>
-    /// This daemon's identity on the events it writes — the ecosystem's autonomous-emitter form, so a
-    /// reader can tell a measured fact from an unattended action of any other kind.
-    /// </summary>
-    public const string Actor = "system:monitor";
-
-    /// <summary>The origin for a fact no product surface drove.</summary>
-    public const string Origin = "system";
-
     /// <summary>A measured value crossed a line this host watches.</summary>
     public const string BreachedEvent = "host_threshold_breached";
 
@@ -54,24 +46,17 @@ public sealed class MonitorJournal(IEventJournalWriter writer, ILogger<MonitorJo
     /// <summary>
     /// Records one episode transition — an opening or a closing, whichever it is.
     /// </summary>
+    /// <remarks>
+    /// The actor is this daemon's derived <c>system:monitor</c> and the origin is <c>system</c>: no
+    /// product surface drove a measurement, which is a fact about how it arose rather than a gap in
+    /// what is known about it.
+    /// </remarks>
     /// <param name="t">The transition the evaluator produced.</param>
     public void Record(EpisodeTransition t)
     {
         bool closed = t.ClosedTs is not null;
-        string type = closed ? ClearedEvent : BreachedEvent;
 
-        try
-        {
-            writer.AppendAsync(type, w => WritePayload(w, t, closed), Actor, Origin)
-                .AsTask()
-                .GetAwaiter()
-                .GetResult();
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex,
-                "threshold episodes: could not record {Event} for {Rule} (event dropped)", type, t.RuleKey);
-        }
+        Record(closed ? ClearedEvent : BreachedEvent, w => WritePayload(w, t, closed));
     }
 
     /// <summary>Writes the payload both events share, plus the half that differs.</summary>
@@ -106,14 +91,5 @@ public sealed class MonitorJournal(IEventJournalWriter writer, ILogger<MonitorJo
             w.WriteNumber("OpenValue", t.Value);
             w.WriteString("Band", t.Band);
         }
-    }
-
-    /// <summary>Writes a value, or a real JSON null when there is none.</summary>
-    private static void WriteNullable(Utf8JsonWriter w, string name, string? value)
-    {
-        if (string.IsNullOrEmpty(value))
-            w.WriteNull(name);
-        else
-            w.WriteString(name, value);
     }
 }

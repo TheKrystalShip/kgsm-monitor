@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-08-16
+
+### Changed — being a journal producer is derived, not wired here
+
+`AddKgsmJournal("kgsm-monitor", …)` replaces this daemon's hand-built writer registration, and
+`MonitorJournal` derives from `JournalRecorder` (kgsm-lib 4.27.0 / Journal 1.1.0). What this repo
+still owns is the part that is its own: the two threshold event types and the payload each carries.
+What it no longer answers for itself is where its journal lives, which version it stamps, what its
+actor is, and what happens when a write fails.
+
+Three of those had drifted across the ecosystem, and two mattered here:
+
+- **`ProducerVersion` is the informational version.** This daemon stamped
+  `Assembly.GetName().Version`, so its events carried `2.3.0.0` — a four-part form no release of it
+  is ever numbered with, and not comparable with the semver every other producer's version is
+  eventually meant to be. Events written from now on carry `2.6.0`. ⚠ Lines already on disk keep the
+  old spelling; the field is free text, so nothing breaks, but a reader comparing across the change
+  sees both.
+- **The journal directory no longer follows the metrics database.** It was derived from
+  `Path.GetDirectoryName(HistoryDbPath)`, so pointing the history store elsewhere would have moved
+  the journal somewhere no reader scans — where a producer is not reported as unreadable, it is
+  simply absent. It now comes from the producer id, which is what a reader derives it from.
+  Unchanged on a default host, where both are `/var/lib/kgsm-monitor/events`.
+- The journal directory is still created at startup rather than on the first episode, for the reason
+  this daemon was alone in having worked out: a leaf that has breached nothing yet must not be
+  indistinguishable from one that writes no journal. That behaviour moved into the shared
+  registration, so every producer now has it.
+
+`system:monitor` is derived from the producer id rather than held as a constant, and is byte-for-byte
+what it was. Authority: `../event-conformance-plan.md` Phase 2.
+
 ## [2.5.3] - 2026-08-16
 
 ### Fixed — the net meter reports success when it loads a prebuilt eBPF object
