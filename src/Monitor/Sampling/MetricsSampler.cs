@@ -1,4 +1,6 @@
+using TheKrystalShip.KGSM.Lifecycle;
 using TheKrystalShip.KGSM.Monitor.Contracts;
+using TheKrystalShip.KGSM.Monitor.History;
 using TheKrystalShip.KGSM.Monitor.Thresholds;
 
 namespace TheKrystalShip.KGSM.Monitor.Sampling;
@@ -17,7 +19,8 @@ public sealed class MetricsSampler(
     ServerSampler? servers = null,
     LeafSampler? leaves = null,
     ConditionEvaluator? conditions = null,
-    PolicyStore? policy = null) : BackgroundService
+    PolicyStore? policy = null,
+    LeafLifecycle? lifecycle = null) : BackgroundService
 {
     private readonly int _intervalMs = options.IntervalMs;
 
@@ -68,16 +71,59 @@ public sealed class MetricsSampler(
                 try
                 {
                     _latest = Build();
+
+                    // The honest moment this leaf became able: /metrics answers 503 until the first
+                    // frame lands, so a readiness reported at startup would claim something the socket
+                    // was still refusing. Writes once; every later tick is a no-op.
+                    lifecycle?.MarkReady($"first frame on a {_intervalMs}ms interval");
+
+                    lifecycle?.MarkRecovered(MonitorComponents.Sampling);
                 }
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "metrics sample failed; keeping previous frame");
+
+                    // ⚠ Keeping the previous frame is right — a gap would read as a host with no
+                    // metrics — but it means a monitor whose sampling has broken serves a plausible,
+                    // frozen snapshot indefinitely. Nothing else on this host can tell.
+                    lifecycle?.MarkDegraded(
+                        MonitorComponents.Sampling,
+                        $"the host sample failed ({ex.Message}); the frame being served is frozen at "
+                        + "the last good one");
                 }
+
+                ReportNetworkMeter();
             }
         }
         catch (OperationCanceledException)
         {
             // normal shutdown
+        }
+    }
+
+    /// <summary>
+    /// Reports the eBPF per-server network meter's availability, both ways.
+    /// </summary>
+    /// <remarks>
+    /// Called every tick with no state of its own: the transition is the emitter's to decide, so this
+    /// says what it observes and a steady state produces nothing. The meter re-probes its pin on each
+    /// sample, so it recovers without a restart once the setup script has run.
+    /// </remarks>
+    private void ReportNetworkMeter()
+    {
+        if (lifecycle is null || _servers is null)
+            return;
+
+        if (_servers.NetworkMeterAvailable)
+        {
+            lifecycle.MarkRecovered(MonitorComponents.NetworkMeter);
+        }
+        else
+        {
+            lifecycle.MarkDegraded(
+                MonitorComponents.NetworkMeter,
+                "the eBPF per-server network meter is unreadable; every server's RxBps and TxBps are "
+                + "null (run deploy/net-meter-setup.sh)");
         }
     }
 

@@ -48,6 +48,16 @@ internal sealed class CgroupSampler
     internal CgroupSampler(ILogger? logger = null) => _net = new NetworkCgroupSource(logger);
 
     /// <summary>
+    /// Whether the eBPF per-server network meter is readable right now.
+    /// </summary>
+    /// <remarks>
+    /// Exposed so the sampler above can report the transition rather than only logging it once. The
+    /// pin is re-probed every tick, so this genuinely flips both ways — a meter attached after the
+    /// monitor started is picked up without a restart.
+    /// </remarks>
+    internal bool NetworkMeterAvailable => _net.Available;
+
+    /// <summary>
     /// Produce one <see cref="ServerMetrics"/> per addressable, running server in
     /// <paramref name="instances"/> (the resync snapshot). Non-running / non-cgroup
     /// servers are absent from the result, not zero-valued.

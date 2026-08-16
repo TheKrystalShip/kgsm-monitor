@@ -1,7 +1,9 @@
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Events;
+using TheKrystalShip.KGSM.Lifecycle;
 using TheKrystalShip.KGSM.Monitor.Contracts;
+using TheKrystalShip.KGSM.Monitor.History;
 
 namespace TheKrystalShip.KGSM.Monitor.Sampling;
 
@@ -39,7 +41,8 @@ public sealed class ServerSampler(
     ILogger<ServerSampler> logger,
     MonitorOptions options,
     IInstanceService instances,
-    IEventService? events = null) : BackgroundService
+    IEventService? events = null,
+    LeafLifecycle? lifecycle = null) : BackgroundService
 {
     private static readonly IReadOnlyDictionary<string, Instance> Empty =
         new Dictionary<string, Instance>();
@@ -47,6 +50,10 @@ public sealed class ServerSampler(
     // logger threaded in so CgroupSampler -> NetworkCgroupSource can log the eBPF meter's
     // availability once (pin/cap state), without making every sub-sampler take a logger.
     private readonly CgroupSampler _cgroup = new(logger);
+
+    /// <summary>Whether the eBPF per-server network meter is readable right now.</summary>
+    /// <remarks>False until the first sample has probed the pin.</remarks>
+    public bool NetworkMeterAvailable => _cgroup.NetworkMeterAvailable;
 
     // Slice 3: the native fallback. Native servers whose cgroup is not live (no cgroup_path,
     // or its kgsm.slice/<inst> dir absent) are invisible to _cgroup; this reads their /proc
@@ -227,6 +234,15 @@ public sealed class ServerSampler(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "KGSM event listener init failed; falling back to resync-only");
+
+            // ⚠ Invisible in a frame. Sampling falls back to the periodic resync, so servers still
+            // appear — just up to one resync interval late, which looks like nothing at all until
+            // somebody wonders why a server they just started has no metrics yet. There is no retry,
+            // so this degradation lasts the life of the process.
+            lifecycle?.MarkDegraded(
+                MonitorComponents.EventListener,
+                $"could not start the KGSM event listener ({ex.Message}); the per-server watch-list "
+                + $"updates only on the {options.ServerResyncMs}ms resync");
         }
     }
 

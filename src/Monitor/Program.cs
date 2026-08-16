@@ -5,6 +5,12 @@ using TheKrystalShip.KGSM.Monitor.Contracts;
 using TheKrystalShip.KGSM.Monitor.History;
 using TheKrystalShip.KGSM.Monitor.Sampling;
 using TheKrystalShip.KGSM.Monitor.Thresholds;
+using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.Lifecycle;
+
+// Stamped before anything else runs, so uptime is this process's rather than the endpoint's first
+// call — and so the lifecycle reporter registered below can capture it.
+DateTimeOffset startedAt = DateTimeOffset.UtcNow;
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
@@ -138,6 +144,26 @@ if (options.HistoryEnabled)
 // conditions on each frame. Needs both halves: something evaluating the rules, and somewhere to write.
 // Missing either, alerts still work off the live frame and nothing is recorded, which is said out loud
 // because "this host keeps no record of what fired" is found out at the worst moment otherwise.
+// This daemon's own event journal, registered whatever else is switched on. ⚠ Deliberately NOT
+// inside the threshold block below: what a leaf says about ITSELF cannot depend on a feature flag, and
+// a monitor with thresholds off would otherwise have no writer and report nothing about its own state
+// — while still being the component every surface on this host reads its metrics from.
+//
+// The producer id decides everything else: the directory a reader scans for, the version stamped on
+// every event, and the directory's creation during startup rather than on the first event — a daemon
+// that has simply had nothing to report would otherwise be indistinguishable from one that writes no
+// journal at all, and would stay invisible until both something happened and every reader restarted.
+builder.Services.AddKgsmJournal("kgsm-monitor", typeof(Program).Assembly);
+
+// What this daemon says about its own state. Separate from MonitorJournal, which says what it
+// measured about the host: the two answer to different identities, and MonitorJournal is only
+// registered when thresholds are on.
+builder.Services.AddSingleton(sp => new LeafLifecycle(
+    sp.GetRequiredService<IEventJournalWriter>(),
+    sp.GetRequiredService<ILogger<LeafLifecycle>>(),
+    clock: null,
+    startedAt: () => startedAt));
+
 if (options.ThresholdsEnabled && options.HistoryEnabled)
 {
     // This daemon's own event journal. Nothing else on this host takes these measurements, so nothing
@@ -150,7 +176,6 @@ if (options.ThresholdsEnabled && options.HistoryEnabled)
     // a daemon that has simply not breached anything yet would otherwise be indistinguishable from one
     // that writes no journal at all, and would stay invisible until both an episode fired and every
     // reader restarted.
-    builder.Services.AddKgsmJournal("kgsm-monitor", typeof(Program).Assembly);
     builder.Services.AddSingleton<MonitorJournal>();
 
     builder.Services.AddHostedService<EpisodeRecorder>();
@@ -168,9 +193,6 @@ builder.WebHost.ConfigureKestrel(kestrel =>
         File.Delete(options.SocketPath);
     kestrel.ListenUnixSocket(options.SocketPath);
 });
-
-// Stamped before the host starts so uptime is this process's, not the endpoint's first call.
-var startedAt = DateTimeOffset.UtcNow;
 
 var app = builder.Build();
 
