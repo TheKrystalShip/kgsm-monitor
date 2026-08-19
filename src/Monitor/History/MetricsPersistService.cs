@@ -55,6 +55,8 @@ public sealed class MetricsPersistService : BackgroundService
                         MapServerMetrics(rows, sm, snap.Ts);
                     foreach (LeafMetrics lm in snap.Leaves)
                         MapLeafMetrics(rows, lm, snap.Ts);
+                    foreach (GpuDevice gpu in snap.Gpu?.Devices ?? [])
+                        MapGpuMetrics(rows, gpu, snap.Ts);
 
                     if (rows.Count > 0)
                     {
@@ -107,6 +109,40 @@ public sealed class MetricsPersistService : BackgroundService
         if (lm.IoWriteBps is { } ioW)
             rows.Add(new HistoryRow("leaf", lm.Id, "ioWriteBps", ts, ioW));
         rows.Add(new HistoryRow("leaf", lm.Id, "pids", ts, lm.Pids));
+
+        // GPU rides the leaf entity kind so a history query needs no new addressing, but keeps its own
+        // metric names: the figures describe a different device from the cgroup ones above and must never
+        // be read as the same quantity. A leaf with no GPU context writes neither row.
+        if (lm.Gpu is { } gpu)
+        {
+            rows.Add(new HistoryRow("leaf", lm.Id, "gpuMemBytes", ts, gpu.MemBytes));
+            if (gpu.SmPct is { } sm)
+                rows.Add(new HistoryRow("leaf", lm.Id, "gpuSmPct", ts, Math.Round(sm, 1)));
+        }
+    }
+
+    /// <summary>
+    /// One device's row set, under the <c>gpu</c> entity kind and keyed by its UUID — stable across reboots,
+    /// unlike the enumeration index, so a series survives a restart that reorders the cards.
+    /// </summary>
+    /// <remarks>
+    /// This is what makes "what was resident on the card when a model failed to load" answerable after the
+    /// fact. Every optional field writes no row rather than a zero, so a gap in the chart means the driver
+    /// stopped reporting that quantity — which is a different fact from it reading zero.
+    /// </remarks>
+    internal static void MapGpuMetrics(List<HistoryRow> rows, GpuDevice gpu, long ts)
+    {
+        rows.Add(new HistoryRow("gpu", gpu.Uuid, "memUsedBytes", ts, gpu.MemUsedBytes));
+        rows.Add(new HistoryRow("gpu", gpu.Uuid, "memTotalBytes", ts, gpu.MemTotalBytes));
+        if (gpu.MemTotalBytes > 0)
+            rows.Add(new HistoryRow("gpu", gpu.Uuid, "memUsedPct", ts,
+                Math.Round(100.0 * gpu.MemUsedBytes / gpu.MemTotalBytes, 1)));
+        if (gpu.SmPct is { } sm)
+            rows.Add(new HistoryRow("gpu", gpu.Uuid, "smPct", ts, Math.Round(sm, 1)));
+        if (gpu.TempC is { } temp)
+            rows.Add(new HistoryRow("gpu", gpu.Uuid, "tempC", ts, Math.Round(temp, 1)));
+        if (gpu.PowerW is { } power)
+            rows.Add(new HistoryRow("gpu", gpu.Uuid, "powerW", ts, Math.Round(power, 1)));
     }
 
     internal static void MapHostMetrics(List<HistoryRow> rows, string hostId, Snapshot s, long ts)

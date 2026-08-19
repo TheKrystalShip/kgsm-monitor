@@ -43,7 +43,9 @@ public sealed class LeafSampler(ILogger<LeafSampler> logger, MonitorOptions opti
     /// <param name="Id">The leaf id from its config descriptor.</param>
     /// <param name="Unit">The systemd unit it runs as.</param>
     /// <param name="CgroupDir">Absolute path under <c>/sys/fs/cgroup</c>, resolved from the main pid.</param>
-    internal sealed record Target(string Id, string Unit, string CgroupDir);
+    /// <param name="GpuBackendUnits">Units whose GPU cost this leaf drives but whose processes it does not
+    /// own. Empty for every leaf that does not declare any.</param>
+    internal sealed record Target(string Id, string Unit, string CgroupDir, string[] GpuBackendUnits);
 
     private sealed class Prev
     {
@@ -76,11 +78,17 @@ public sealed class LeafSampler(ILogger<LeafSampler> logger, MonitorOptions opti
     /// on its own rather than waiting out the full period. Returns an empty array until the first resolve
     /// lands. Called on the host sampling thread.
     /// </summary>
-    public LeafMetrics[] Sample()
+    public LeafMetrics[] Sample(GpuMetrics? gpu = null)
     {
         IReadOnlyList<Target> targets = _targets;
         if (targets.Count == 0)
             return [];
+
+        // One pass over the frame's compute contexts, so attributing a leaf costs a lookup rather than a
+        // scan. Leaves that touch no GPU simply miss, which is why there is no allow-list of which ones do.
+        ILookup<string, GpuProcess>? byUnit = gpu?.Processes
+            .Where(p => p.Unit is not null)
+            .ToLookup(p => p.Unit!, StringComparer.Ordinal);
 
         long now = Environment.TickCount64;
         double dt = _prevTicks == 0 ? 1.0 : Math.Max(1, now - _prevTicks) / 1000.0;
@@ -148,7 +156,8 @@ public sealed class LeafSampler(ILogger<LeafSampler> logger, MonitorOptions opti
                 MemBytes: memBytes,
                 IoReadBps: ioReadBps,
                 IoWriteBps: ioWriteBps,
-                Pids: pids));
+                Pids: pids,
+                Gpu: AttributeGpu(t, byUnit)));
         }
 
         // Drop rate-state for leaves that vanished, so a restarted leaf starts fresh rather than deriving
@@ -224,7 +233,7 @@ public sealed class LeafSampler(ILogger<LeafSampler> logger, MonitorOptions opti
     {
         try
         {
-            IReadOnlyList<(string Id, string Unit)> declared = ReadDescriptors(options.LeafDescriptorDir);
+            IReadOnlyList<(string Id, string Unit, string[] GpuBackendUnits)> declared = ReadDescriptors(options.LeafDescriptorDir);
             if (declared.Count == 0)
             {
                 _targets = [];
@@ -235,14 +244,14 @@ public sealed class LeafSampler(ILogger<LeafSampler> logger, MonitorOptions opti
             IReadOnlyDictionary<string, int> pids = ReadMainPids([.. declared.Select(d => d.Unit)]);
 
             var targets = new List<Target>(declared.Count);
-            foreach ((string id, string unit) in declared)
+            foreach ((string id, string unit, string[] backends) in declared)
             {
                 if (!pids.TryGetValue(unit, out int pid) || pid <= 0)
                     continue;                                   // not running — no cgroup to read
                 string? dir = ResolveCgroupDir(pid);
                 if (dir is null)
                     continue;                                   // exited between the two reads, or not cgroup v2
-                targets.Add(new Target(id, unit, dir));
+                targets.Add(new Target(id, unit, dir, backends));
             }
 
             _targets = targets;
@@ -257,12 +266,18 @@ public sealed class LeafSampler(ILogger<LeafSampler> logger, MonitorOptions opti
     }
 
     /// <summary>
-    /// The <c>(id, unit)</c> pair out of every leaf config descriptor in <paramref name="dir"/>. Parsed with
-    /// <see cref="JsonDocument"/> — reflection-free (so it costs the AOT publish nothing) and tolerant, since
-    /// this daemon cares about two fields of a document whose remaining shape belongs to the Control Panel.
-    /// A malformed or unreadable file drops that one leaf rather than the scan.
+    /// The identity, unit and declared GPU backends out of every leaf config descriptor in
+    /// <paramref name="dir"/>. Parsed with <see cref="JsonDocument"/> — reflection-free (so it costs the AOT
+    /// publish nothing) and tolerant, since this daemon cares about three fields of a document whose
+    /// remaining shape belongs to the Control Panel. A malformed or unreadable file drops that one leaf
+    /// rather than the scan.
     /// </summary>
-    internal static IReadOnlyList<(string Id, string Unit)> ReadDescriptors(string dir)
+    /// <remarks>
+    /// <c>gpuBackendUnits</c> is how a leaf names units whose GPU cost is its own even though the processes
+    /// are not: the assistant drives <c>llama-server</c> and spends its video memory there. Absent for the
+    /// leaves that hold their own GPU contexts, because that needs no declaring — the cgroup already says so.
+    /// </remarks>
+    internal static IReadOnlyList<(string Id, string Unit, string[] GpuBackendUnits)> ReadDescriptors(string dir)
     {
         string[] files;
         try
@@ -274,7 +289,7 @@ public sealed class LeafSampler(ILogger<LeafSampler> logger, MonitorOptions opti
             return [];   // directory absent (no leaf has deployed here yet) or unreadable
         }
 
-        var found = new List<(string, string)>(files.Length);
+        var found = new List<(string, string, string[])>(files.Length);
         foreach (string file in files.Order(StringComparer.Ordinal))
         {
             try
@@ -286,7 +301,7 @@ public sealed class LeafSampler(ILogger<LeafSampler> logger, MonitorOptions opti
                 string? id = idEl.GetString();
                 string? unit = unitEl.GetString();
                 if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(unit))
-                    found.Add((id.Trim(), unit.Trim()));
+                    found.Add((id.Trim(), unit.Trim(), ReadBackendUnits(doc.RootElement)));
             }
             catch
             {
@@ -294,6 +309,68 @@ public sealed class LeafSampler(ILogger<LeafSampler> logger, MonitorOptions opti
             }
         }
         return found;
+    }
+
+    /// <summary>
+    /// The GPU attributed to one leaf, or null when it holds no GPU context and drives no backend that does.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two ways a leaf reaches the card, and they are not reported the same. Its own unit holding contexts
+    /// is <c>own</c>; contexts in the units it declared as backends are <c>backend</c>. The distinction is
+    /// on the wire because the figures mean different things to a reader: a backend's memory persists while
+    /// the leaf itself is stopped, since a socket-activated model outlives the service that asked for it.
+    /// </para>
+    /// <para>
+    /// A leaf's own contexts win over its declared backends. Nothing declares a backend it also runs
+    /// in-process, and if one ever did, the measurement it holds directly is the more precise claim.
+    /// </para>
+    /// <para>
+    /// Utilisation sums only over processes that were actually sampled. When none was, the result is null —
+    /// the backend is loaded and idle, which a zero would render indistinguishable from having done
+    /// measured work amounting to nothing.
+    /// </para>
+    /// </remarks>
+    private static LeafGpu? AttributeGpu(Target t, ILookup<string, GpuProcess>? byUnit)
+    {
+        if (byUnit is null) return null;
+
+        GpuProcess[] own = [.. byUnit[t.Unit]];
+        if (own.Length > 0)
+            return Summarise("own", [t.Unit], own);
+
+        if (t.GpuBackendUnits.Length == 0) return null;
+
+        string[] contributing = [.. t.GpuBackendUnits.Where(u => byUnit[u].Any())];
+        if (contributing.Length == 0) return null;
+
+        return Summarise("backend", contributing, [.. contributing.SelectMany(u => byUnit[u])]);
+    }
+
+    private static LeafGpu Summarise(string attribution, string[] units, GpuProcess[] processes)
+    {
+        double[] sampled = [.. processes.Where(p => p.SmPct is not null).Select(p => p.SmPct!.Value)];
+
+        return new LeafGpu(
+            Attribution: attribution,
+            Units: units,
+            MemBytes: processes.Sum(p => p.MemBytes),
+            SmPct: sampled.Length == 0 ? null : Math.Round(sampled.Sum(), 1));
+    }
+
+    /// <summary>The <c>gpuBackendUnits</c> array, or empty when the leaf declares none.</summary>
+    private static string[] ReadBackendUnits(JsonElement root)
+    {
+        if (!root.TryGetProperty("gpuBackendUnits", out JsonElement el) || el.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var units = new List<string>();
+        foreach (JsonElement item in el.EnumerateArray())
+        {
+            string? unit = item.ValueKind == JsonValueKind.String ? item.GetString() : null;
+            if (!string.IsNullOrWhiteSpace(unit)) units.Add(unit.Trim());
+        }
+        return [.. units];
     }
 
     /// <summary>

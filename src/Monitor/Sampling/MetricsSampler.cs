@@ -29,6 +29,7 @@ public sealed class MetricsSampler(
     private readonly NetworkSource _net = new(options.IfaceDenyPrefixes);
     private readonly DiskSource _disk = new(options.MountFsDeny);
     private readonly SensorSource _sensors = new();
+    private readonly GpuSource _gpu = new();
 
     // Static CPU identity — read once (it doesn't change) and reused on every frame.
     private readonly CpuInfo _cpuInfo = CpuInfoSource.Read();
@@ -135,6 +136,9 @@ public sealed class MetricsSampler(
         var disk = _disk.Sample();
         var (load, uptime, host) = SystemSource.Read();
 
+        // Sampled before the leaves, because attributing a leaf's GPU is a join against these contexts.
+        GpuMetrics? gpu = _gpu.Sample();
+
         var frame = new Snapshot(
             Ts: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             IntervalMs: _intervalMs,
@@ -146,11 +150,12 @@ public sealed class MetricsSampler(
             Net: net,
             Sensors: _sensors.Sample(),
             Servers: _servers?.Sample() ?? [],
-            Leaves: _leaves?.Sample() ?? [],
+            Leaves: _leaves?.Sample(gpu) ?? [],
             Conditions: [],
             // Run-state-independent, so it is NOT derived from Servers above: an instance sitting
             // stopped has no metrics row and still occupies its disk.
-            ServerDisks: _servers?.SampleDiskUsage() ?? []);
+            ServerDisks: _servers?.SampleDiskUsage() ?? [],
+            Gpu: gpu);
 
         // The rules are evaluated against the frame that is about to be published, and the verdict is folded
         // back into it — so a condition and the reading that produced it are never a tick apart, and a

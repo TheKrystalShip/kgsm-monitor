@@ -37,12 +37,19 @@ Theoretical ceiling at the current cost: **~620 frames/sec** before the sampler 
 | Source     | Mean        | Allocated | % of frame |
 |----------- |------------:|----------:|-----------:|
 | Disk       | 1,561.90 µs | 306.78 KB |   96.9 %   |  <-- DriveInfo.GetDrives() statvfs + /sys/block
+| Gpu        | 1,337.01 µs |  41.59 KB |   83.0 %   |  <-- NVML device query + 2 per-process calls
 | Network    |    58.20 µs |  16.41 KB |    3.6 %   |
 | Cpu        |    43.99 µs |  38.88 KB |    2.7 %   |
 | SystemInfo |    17.26 µs |  15.88 KB |    1.1 %   |
 | Memory     |    16.34 µs |  19.90 KB |    1.0 %   |
 ```
 (Percentages sum to >100 % because frame ≈ Σ sources and the per-source runs have independent noise.)
+
+**GPU sits on the host tick and the cost supports that.** 1.34 ms is 0.13 % of the 1000 ms budget —
+the same order as Disk, a third of the native per-server `/proc` walk, and it does not scale with
+anything an operator adds: the work is per *device*, and a host has one or two, not one per game
+server. Three NVML calls per device (memory/utilisation/identity plus the two per-process queries)
+with no process spawned. A host with no card pays a single cached branch, measured at no cost at all.
 
 ## Pure parse / rate math (in-memory, no IO)
 ```

@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — GPU, measured per device and per leaf
+
+The frame carries `gpu`: every device on the host (memory, utilisation, temperature, power) and every
+compute context on them, each resolved to the systemd unit that owns it. Read from NVML directly —
+no `nvidia-smi` spawn, no CUDA runtime, no accounting mode — so it runs unprivileged and costs
+1.34 ms of the 1000 ms tick (`bench/BASELINE.md`).
+
+A leaf carries `gpu` too, and it is deliberately **not** folded into its cgroup `cpuPctCore`/`memBytes`:
+those stay scoped to the leaf's own process tree. A leaf reaches the card two ways and they report
+differently. `attribution: "own"` is discovered from its own cgroup. `attribution: "backend"` covers
+units a leaf drives but does not own — the assistant is an HTTP client that spends no GPU itself while
+`llama-server` holds several gigabytes on its behalf — and is declared by `gpuBackendUnits` in the
+leaf's config descriptor. `units` always names where the figures came from.
+
+⚠ **A backend outlives the leaf that drives it.** A socket-activated model stays resident after the
+service that asked for it has stopped, so a leaf's `backend` figures can be present while the leaf
+itself is not running. The attribution field is what keeps that from reading as the leaf's own footprint.
+
+⚠ **Utilisation is sampled over a window; memory is not.** A process that did no work in the window is
+absent from NVML's result, so `smPct` is `null` — loaded and idle, which a `0` would make
+indistinguishable from measured-and-idle. Memory is always a plain figure.
+
+⚠ **`gpu.processes` names processes that have nothing to do with KGSM.** Anything using the card for
+compute appears there. A consumer serving lower-privileged readers projects it down rather than passing
+it through, keeping the aggregate's memory so the rows still sum to the device's figure.
+
+### Added — a GPU memory threshold
+
+`HostGpuMemUsedPct` fans out one observation per device, keyed by UUID. Default `host-gpu-mem`:
+warn 93, danger 97, dwell 120/120, clear margin 3.
+
+⚠ The bands sit high because the measured quantity is the **device's** used figure, which exceeds the
+sum of its processes — this host reads 88.1 % with its models resident while the processes account for
+84.8 %, the difference being driver and CUDA context overhead belonging to no pid. Both the warn line
+and the clear line (`warn − margin`) have to sit above that healthy steady state, or ordinary operation
+reads as a fault and a condition that opens can never close.
+
+⚠ Device memory neither swaps nor reclaims: a model that does not fit fails to load outright rather than
+running slowly. The danger band is the actionable one, and acting on it means freeing a backend — not
+restarting the leaf that reported it, which is not what holds the memory.
+
+### Added — GPU history
+
+`gpu` joins `host`/`server`/`leaf` as an entity kind, keyed by device UUID (stable across a reboot that
+reorders the cards), carrying `memUsedBytes`, `memTotalBytes`, `memUsedPct`, `smPct`, `tempC`, `powerW`.
+Leaves carry `gpuMemBytes`/`gpuSmPct`. The store is keyed generically, so rollup and retention cover
+these with no migration. A null writes no row, which is what keeps "the backend was loaded but idle"
+distinguishable from "nothing was there" after the fact.
+
 ## [2.9.0] - 2026-08-18
 
 ### Added — every journal line now carries its own id

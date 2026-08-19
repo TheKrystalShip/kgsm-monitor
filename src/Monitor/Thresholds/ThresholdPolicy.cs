@@ -37,6 +37,11 @@ public enum ThresholdMetric
     /// the chip/label.</summary>
     HostTempC,
 
+    /// <summary>Device memory in use, percent (<c>GpuDevice.MemUsedBytes / MemTotalBytes</c>) — fans out:
+    /// one observation per GPU, <see cref="MetricObservation.RefKey"/> = the device UUID. Not evaluable on
+    /// a host with no GPU, or for a device reporting no total.</summary>
+    HostGpuMemUsedPct,
+
     /// <summary>Per-server resident memory, bytes (<c>ServerMetrics.MemBytes</c>).</summary>
     ServerMemBytes,
 
@@ -112,6 +117,17 @@ public sealed record MetricsThresholdPolicy(IReadOnlyList<ThresholdRule> Rules)
             FireForSec: 120, ClearForSec: 120, ClearMargin: 0.3, Enabled: true),
         new(Key: "host-temp", Metric: ThresholdMetric.HostTempC, Warn: 85, Danger: 95,
             FireForSec: 30, ClearForSec: 60, ClearMargin: 5, Enabled: true),
+        // Device memory neither swaps nor reclaims: a model that does not fit fails to load outright rather
+        // than running slowly, so the danger band is the actionable one and the warn band is advisory.
+        //
+        // The bands sit high because the measured quantity is the DEVICE's used figure, which is larger than
+        // the processes on it — driver and CUDA context overhead belongs to no pid and still occupies the
+        // card. A host with several models resident reads a high, entirely healthy steady state, and both
+        // lines have to clear it: the warn line so ordinary operation is not reported as a fault, and the
+        // clear line (Warn - ClearMargin) so a condition that opens can close again once the card is back to
+        // that steady state. A clear line below it would hold a condition open forever.
+        new(Key: "host-gpu-mem", Metric: ThresholdMetric.HostGpuMemUsedPct, Warn: 93, Danger: 97,
+            FireForSec: 120, ClearForSec: 120, ClearMargin: 3, Enabled: true),
         new(Key: "srv-pids", Metric: ThresholdMetric.ServerPids, Warn: 1000, Danger: null,
             FireForSec: 120, ClearForSec: 120, ClearMargin: 50, Enabled: false),
         new(Key: "srv-mem", Metric: ThresholdMetric.ServerMemBytes, Warn: 0, Danger: null,
@@ -149,6 +165,7 @@ public static class ThresholdMetrics
         ThresholdMetric.HostDiskUsedPct => true,
         ThresholdMetric.HostLoadPerCore => true,
         ThresholdMetric.HostTempC => true,
+        ThresholdMetric.HostGpuMemUsedPct => true,
         _ => false,
     };
 
@@ -163,6 +180,7 @@ public static class ThresholdMetrics
         ThresholdMetric.HostDiskUsedPct => "HostDiskUsedPct",
         ThresholdMetric.HostLoadPerCore => "HostLoadPerCore",
         ThresholdMetric.HostTempC => "HostTempC",
+        ThresholdMetric.HostGpuMemUsedPct => "HostGpuMemUsedPct",
         ThresholdMetric.ServerMemBytes => "ServerMemBytes",
         ThresholdMetric.ServerCpuPctCore => "ServerCpuPctCore",
         ThresholdMetric.ServerPids => "ServerPids",
@@ -188,6 +206,7 @@ public static class ThresholdMetrics
     {
         ThresholdMetric.HostDiskUsedPct => true,
         ThresholdMetric.HostTempC => true,
+        ThresholdMetric.HostGpuMemUsedPct => true,
         ThresholdMetric.ServerMemBytes => true,
         ThresholdMetric.ServerCpuPctCore => true,
         ThresholdMetric.ServerPids => true,
@@ -234,6 +253,16 @@ public static class ThresholdMetrics
             {
                 foreach (SensorReading sensor in snap.Sensors ?? [])
                     yield return new MetricObservation(SensorRef(sensor), null, sensor.ValueC);
+                break;
+            }
+
+            case ThresholdMetric.HostGpuMemUsedPct:
+            {
+                foreach (GpuDevice gpu in snap.Gpu?.Devices ?? [])
+                {
+                    if (gpu.MemTotalBytes <= 0) continue;   // not evaluable: the device reports no capacity
+                    yield return new MetricObservation(gpu.Uuid, null, 100.0 * gpu.MemUsedBytes / gpu.MemTotalBytes);
+                }
                 break;
             }
 

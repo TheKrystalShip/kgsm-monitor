@@ -41,8 +41,9 @@ public class LeafSamplingTests : IDisposable
         var found = LeafSampler.ReadDescriptors(Dir("leaves"));
 
         Assert.Equal(2, found.Count);
-        Assert.Contains(("monitor", "kgsm-monitor.service"), found);
-        Assert.Contains(("watchdog", "kgsm-watchdog.service"), found);
+        Assert.Contains(found, d => d.Id == "monitor" && d.Unit == "kgsm-monitor.service");
+        Assert.Contains(found, d => d.Id == "watchdog" && d.Unit == "kgsm-watchdog.service");
+        Assert.All(found, d => Assert.Empty(d.GpuBackendUnits));
     }
 
     [Fact]
@@ -56,7 +57,9 @@ public class LeafSamplingTests : IDisposable
 
         var found = LeafSampler.ReadDescriptors(Dir("leaves"));
 
-        Assert.Equal([("monitor", "kgsm-monitor.service")], found);
+        (string Id, string Unit, string[] GpuBackendUnits) only = Assert.Single(found);
+        Assert.Equal("monitor", only.Id);
+        Assert.Equal("kgsm-monitor.service", only.Unit);
     }
 
     [Fact]
@@ -78,6 +81,56 @@ public class LeafSamplingTests : IDisposable
         using JsonDocument doc = JsonDocument.Parse(File.ReadAllBytes(shipped));
         Assert.Equal("monitor", doc.RootElement.GetProperty("id").GetString());
         Assert.Equal("kgsm-monitor.service", doc.RootElement.GetProperty("unit").GetString());
+    }
+
+    [Fact]
+    public void ReadDescriptors_takes_the_declared_gpu_backend_units()
+    {
+        // How a leaf claims GPU spent in a process it does not own: the assistant drives llama-server,
+        // whose video memory is the assistant's cost even though the pid belongs to another unit.
+        WriteDescriptor("assistant.json", """
+            {"id":"assistant","unit":"kgsm-assistant-service.service",
+             "gpuBackendUnits":["kgsm-llama-chat.service","kgsm-llama-embed.service"]}
+            """);
+
+        (string Id, string Unit, string[] GpuBackendUnits) only =
+            Assert.Single(LeafSampler.ReadDescriptors(Dir("leaves")));
+
+        Assert.Equal(["kgsm-llama-chat.service", "kgsm-llama-embed.service"], only.GpuBackendUnits);
+    }
+
+    [Fact]
+    public void ReadDescriptors_ignores_a_malformed_gpu_backend_list()
+    {
+        // A wrong-typed or junk-bearing key costs the leaf its backends, never the leaf itself.
+        WriteDescriptor("a.json", """{"id":"a","unit":"a.service","gpuBackendUnits":"not-an-array"}""");
+        WriteDescriptor("b.json", """{"id":"b","unit":"b.service","gpuBackendUnits":["ok.service","",7]}""");
+
+        var found = LeafSampler.ReadDescriptors(Dir("leaves"));
+
+        Assert.Empty(found.Single(d => d.Id == "a").GpuBackendUnits);
+        Assert.Equal(["ok.service"], found.Single(d => d.Id == "b").GpuBackendUnits);
+    }
+
+    // ---- gpu unit resolution ----
+
+    [Theory]
+    [InlineData("0::/system.slice/kgsm-llama-chat.service", "kgsm-llama-chat.service")]
+    [InlineData("0::/system.slice/kgsm-speech.service", "kgsm-speech.service")]
+    [InlineData("0::/kgsm.slice/kgsm-factorio.scope", "kgsm-factorio.scope")]
+    [InlineData("0::/user.slice/user-1000.slice/session-2.scope", "session-2.scope")]
+    [InlineData("0::/", null)]
+    [InlineData("", null)]
+    public void UnitFromCgroupLine_names_the_owning_unit(string line, string? expected) =>
+        Assert.Equal(expected, GpuSource.UnitFromCgroupLine(line));
+
+    [Fact]
+    public void UnitFromCgroupLine_takes_the_deepest_unit_segment()
+    {
+        // A supervisor spawning children into nested cgroups: the work belongs to the unit it runs in,
+        // not to the slice above it.
+        Assert.Equal("child.service",
+            GpuSource.UnitFromCgroupLine("0::/system.slice/parent.service/child.service"));
     }
 
     // ---- systemctl show parsing ----

@@ -317,6 +317,66 @@ carry numbers; other kinds read `null` until their measurement path lands (conta
   beyond the path+method is ignored — it is a pure read. Unmapped methods → `405`, unmapped
   paths → `404`.
 
+### 4.0 GPU
+
+`gpu` is present on the frame when the host has a readable NVIDIA device, and **`null` when it has
+none** — no card, no driver, or no `libnvidia-ml.so.1`. That is an ordinary host, not a fault: a
+consumer renders one less thing rather than an error.
+
+```jsonc
+"gpu": {
+  "devices": [{
+    "index": 0, "name": "NVIDIA GeForce RTX 3060",
+    "uuid": "GPU-cfc38e09-…",          // stable across reboots — join on this, never on index
+    "memTotalBytes": 12884901888,
+    "memUsedBytes": 10134487040,       // the DEVICE's figure: exceeds the sum of processes below,
+                                       // because driver/CUDA context overhead belongs to no pid
+    "smPct": 0, "tempC": 56, "powerW": 16.3, "powerCapW": 170
+  }],
+  "processes": [{
+    "deviceIndex": 0, "pid": 3135, "processName": "llama-server",
+    "unit": "kgsm-llama-embed.service",   // null when the pid resolves to no unit
+    "memBytes": 528482304,
+    "smPct": null                          // not sampled in the window = idle, NOT zero
+  }]
+}
+```
+
+⚠ **`smPct` is `null` for an idle process, and that is not `0`.** Utilisation comes from a windowed
+sampler: a process that did no work in the window is absent from the driver's result entirely. A `0`
+means it *was* sampled and was idle. Both occur; do not collapse them.
+
+⚠ **Never sum `memTotalBytes` or `memUsedBytes` across devices.** Video memory does not pool. A total
+would imply a model could use it, and a model that does not fit on one card fails to load.
+
+⚠ **`processes` names processes with nothing to do with KGSM** — anything on the host using the card
+for compute. A consumer serving viewers or any lower-privileged reader **projects this down**: name
+only the contexts resolving to a known unit, and fold the rest into one unnamed row that **keeps its
+memory figure**. Dropping those rows instead of aggregating them would leave the per-process figures
+failing to sum to the device's, which is its own quiet lie.
+
+Each leaf in `leaves[]` may also carry `gpu`:
+
+```jsonc
+"gpu": { "attribution": "backend", "units": ["kgsm-llama-chat.service"],
+         "memBytes": 9191817216, "smPct": 93.0 }
+```
+
+`attribution` is `own` when the leaf's own processes hold the contexts, and `backend` when the figures
+come from units it drives but does not own — the assistant spends no GPU in its own process while
+`llama-server` holds gigabytes on its behalf. `units` always names where the figures came from, and a
+surface must render that rather than implying the leaf's own process.
+
+⚠ **A `backend` figure can be present while the leaf is stopped.** A socket-activated model outlives
+the service that asked for it. Do not read a leaf's `gpu` as its own footprint.
+
+⚠ **`gpu: null` on a leaf means it has no GPU context at all** — the ordinary case for most leaves.
+Render no GPU section rather than an empty or zeroed one.
+
+For history, `kind=gpu` addresses a device **by its UUID**, serving `memUsedBytes`, `memTotalBytes`,
+`memUsedPct`, `smPct`, `tempC`, `powerW`. Leaves carry `gpuMemBytes` and `gpuSmPct` under `kind=leaf`.
+A null writes no row, so a gap means the quantity was not measured — never that it read zero.
+
 ### 4.1 Engine events are not served here
 
 The monitor exposes **no event endpoint**. It reads the engine's journal only to learn that the

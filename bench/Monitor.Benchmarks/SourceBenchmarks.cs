@@ -31,6 +31,8 @@ public class SourceBenchmarks
     private readonly CgroupSampler _cgroup = new();
     private Dictionary<string, Instance> _oneServer = new();
 
+    private readonly GpuSource _gpu = new();
+
     private readonly ProcTreeSampler _procTree = new();
     private Dictionary<string, Instance> _oneNative = new();
 
@@ -41,6 +43,7 @@ public class SourceBenchmarks
         _cpu.Sample();
         _net.Sample();
         _disk.Sample();
+        _gpu.Sample();   // bind NVML and enumerate devices, so the measurement is steady-state
 
         // Point the cgroup sampler at one real, live container (docker) cgroup so the
         // per-server number reflects actual kernel reads (cpu.stat/memory.current/
@@ -69,6 +72,14 @@ public class SourceBenchmarks
 
     [Benchmark]
     public (LoadAvg, long, string) SystemInfo() => SystemSource.Read();
+
+    /// <summary>
+    /// The whole GPU frame: device query plus the two per-process NVML calls, joined to their units.
+    /// Returns null on a host with no card, which costs a single cached branch and is the honest number
+    /// for the hosts that have none.
+    /// </summary>
+    [Benchmark]
+    public GpuMetrics? Gpu() => _gpu.Sample();
 
     [Benchmark]
     public ServerMetrics[] Server() => _cgroup.Sample(_oneServer);

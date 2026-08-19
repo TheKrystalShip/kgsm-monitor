@@ -242,6 +242,7 @@ if (options.HistoryEnabled)
         {
             "host" => "host",
             "leaf" => "leaf",
+            "gpu" => "gpu",
             _ => "server",
         };
         if (string.IsNullOrEmpty(id))

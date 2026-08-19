@@ -19,7 +19,71 @@ public sealed record Snapshot(
     ServerMetrics[] Servers,  // per-KGSM-server cgroup metrics (empty when none running)
     LeafMetrics[] Leaves,     // per-KGSM-leaf cgroup metrics (empty when off/none running)
     ConditionReading[] Conditions,   // threshold conditions currently breaching (empty when none/off)
-    ServerDiskUsage[]? ServerDisks = null);  // on-disk footprint per WATCHED instance, running or not
+    ServerDiskUsage[]? ServerDisks = null,   // on-disk footprint per WATCHED instance, running or not
+    GpuMetrics? Gpu = null);         // GPU devices + compute contexts (null when the host has none)
+
+/// <summary>
+/// The GPU devices on this host and every compute context running on them. Pure measurement — which
+/// leaf a context is attributed to is decided separately, in <see cref="LeafGpu"/>.
+/// </summary>
+/// <remarks>
+/// Null on a host with no card, no driver, or no <c>libnvidia-ml.so.1</c>. The library is opened lazily
+/// and its absence is an ordinary state rather than a fault: a host that never had a GPU reports one
+/// less thing, not an error.
+/// </remarks>
+public sealed record GpuMetrics(GpuDevice[] Devices, GpuProcess[] Processes);
+
+/// <summary>One GPU, and what it currently holds.</summary>
+/// <remarks>
+/// ⚠ Device memory is <b>never summed across devices</b> by any consumer. VRAM does not pool — a total
+/// would imply a model could use it, and a model that does not fit on one card simply fails to load.
+/// </remarks>
+/// <param name="Index">The NVML device index. Stable only within one boot; join on <paramref name="Uuid"/>.</param>
+/// <param name="Name">Marketing name, e.g. "NVIDIA GeForce RTX 3060".</param>
+/// <param name="Uuid">Immutable per-card identifier — the key history rows and threshold episodes address a device by.</param>
+/// <param name="MemTotalBytes">Total device memory.</param>
+/// <param name="MemUsedBytes">Device memory in use, the card's own figure — not the sum of <see cref="GpuProcess"/> rows.</param>
+/// <param name="SmPct">Device-wide compute utilisation, or null when unreadable.</param>
+/// <param name="TempC">Core temperature in °C, or null when unreadable.</param>
+/// <param name="PowerW">Current draw in watts, or null when unreadable.</param>
+/// <param name="PowerCapW">Enforced power limit in watts, or null when unreadable.</param>
+public sealed record GpuDevice(
+    int Index,
+    string Name,
+    string Uuid,
+    long MemTotalBytes,
+    long MemUsedBytes,
+    double? SmPct,
+    double? TempC,
+    double? PowerW,
+    double? PowerCapW);
+
+/// <summary>
+/// One compute context on a device, resolved to the systemd unit that owns it.
+/// </summary>
+/// <remarks>
+/// <b>This names processes that have nothing to do with KGSM.</b> Anything on the host using the card
+/// for compute appears here, so a consumer serving untrusted or lower-privileged readers projects this
+/// down — naming only contexts that resolve to a known unit and aggregating the rest into an unnamed
+/// row — rather than passing it through. The aggregate must keep its memory figure: dropping the rows
+/// instead of folding them would leave the per-process figures failing to sum to the device's.
+/// </remarks>
+/// <param name="DeviceIndex">Which <see cref="GpuDevice"/> this context runs on.</param>
+/// <param name="Pid">The owning process.</param>
+/// <param name="ProcessName">The executable's name, as the driver reports it.</param>
+/// <param name="Unit">The systemd unit from <c>/proc/&lt;pid&gt;/cgroup</c>, or null when it resolves to none.</param>
+/// <param name="MemBytes">Device memory held by this context.</param>
+/// <param name="SmPct">
+/// Compute utilisation, or <c>null</c> when this process was not sampled in the lookback window.
+/// Absence is idleness, never a measured zero.
+/// </param>
+public sealed record GpuProcess(
+    int DeviceIndex,
+    int Pid,
+    string ProcessName,
+    string? Unit,
+    long MemBytes,
+    double? SmPct);
 
 public sealed record CpuMetrics(double TotalPct, double[] PerCore, LoadAvg Load, CpuInfo? Info);
 
@@ -209,6 +273,10 @@ public sealed record ServerDiskUsage(string Id, long DiskBytes);
 /// (the io controller isn't accounted for this cgroup) — never a fabricated 0.</param>
 /// <param name="IoWriteBps">Block-IO write rate, or null (see <paramref name="IoReadBps"/>).</param>
 /// <param name="Pids">Live process/thread count (<c>pids.current</c>).</param>
+/// <param name="Gpu">
+/// GPU attributed to this leaf, or <c>null</c> when it has no GPU context at all — which is the
+/// ordinary case for most leaves and is <em>not</em> the same as a zero. See <see cref="LeafGpu"/>.
+/// </param>
 public sealed record LeafMetrics(
     string Id,
     string Unit,
@@ -216,7 +284,44 @@ public sealed record LeafMetrics(
     long MemBytes,
     long? IoReadBps,
     long? IoWriteBps,
-    int Pids);
+    int Pids,
+    LeafGpu? Gpu = null);
+
+/// <summary>
+/// GPU attributed to one leaf, kept deliberately apart from that leaf's own cgroup figures.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>The work is the leaf's; the process spending it may not be.</b> A leaf that drives a model
+/// backend — the assistant and its <c>llama-server</c> units — causes GPU cost in a process it neither
+/// started nor owns. Both facts have to survive to a reader, so the figures live here rather than being
+/// folded into <see cref="LeafMetrics.CpuPctCore"/> and <see cref="LeafMetrics.MemBytes"/>, which stay
+/// strictly scoped to the leaf's own cgroup. A surface renders "via kgsm-llama-chat.service", never
+/// "this leaf's process is using 8 GiB".
+/// </para>
+/// <para>
+/// <b>There is deliberately no "shared" flag.</b> A backend can have drivers that ship no leaf
+/// descriptor and are therefore invisible to any derivation — so a computed boolean would confidently
+/// claim sole ownership it cannot verify. <see cref="Units"/> is the honest signal and is always right.
+/// </para>
+/// </remarks>
+/// <param name="Attribution">
+/// <c>own</c> when the leaf's own processes hold the GPU contexts, <c>backend</c> when the figures come
+/// from units it drives but does not own. Declaration exists only for what discovery cannot see:
+/// <c>own</c> falls out of the leaf's cgroup, <c>backend</c> is declared by the leaf's config descriptor.
+/// </param>
+/// <param name="Units">The units these figures actually came from. Never empty.</param>
+/// <param name="MemBytes">Device memory held by those processes, summed. Exact — VRAM has no sampling window.</param>
+/// <param name="SmPct">
+/// Compute utilisation, summed across those processes, or <c>null</c> when none of them was sampled in
+/// the lookback window. Null means <em>idle, not measured</em> — a loaded-but-idle backend reports
+/// <see cref="MemBytes"/> with a null here, which a zero could not distinguish from doing no work at all.
+/// </param>
+public sealed record LeafGpu(
+    string Attribution,
+    string[] Units,
+    long MemBytes,
+    double? SmPct);
 
 /// <summary>
 /// One threshold rule's verdict about one target: this metric is over its line, and has been for long
