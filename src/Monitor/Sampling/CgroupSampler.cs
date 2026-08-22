@@ -1,3 +1,4 @@
+using System.Globalization;
 using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Monitor.Contracts;
 
@@ -7,9 +8,10 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// Samples per-server resource usage from cgroup v2 counters. Given the current
 /// watch-list, it resolves each instance to a candidate cgroup (via
 /// <see cref="ServerCgroupResolver"/>), stats it, and — if present — reads
-/// <c>cpu.stat</c>, <c>memory.current</c>, <c>pids.current</c> and (optionally)
-/// <c>io.stat</c>. A server whose cgroup is absent is silently skipped (stopped,
-/// native-standalone, or an unmatched container path).
+/// <c>cpu.stat</c>, <c>memory.current</c>, <c>pids.current</c>, the memory sizing
+/// counters (<see cref="ServerMemory"/>) and (optionally) <c>io.stat</c>. A server
+/// whose cgroup is absent is silently skipped (stopped, native-standalone, or an
+/// unmatched container path).
 /// <para>
 /// CPU is a rate (<c>usage_usec</c> is cumulative) so this is stateful: it keeps
 /// the previous counters per server id, mutated only on the sampling thread (no
@@ -87,6 +89,7 @@ internal sealed class CgroupSampler
 
             long memBytes = TryReadText(Path.Combine(dir, "memory.current"), out string memTxt)
                 ? ParseCounter(memTxt) : 0;
+            ServerMemory? memory = ReadMemory(dir);
             int pids = TryReadText(Path.Combine(dir, "pids.current"), out string pidTxt)
                 ? (int)ParseCounter(pidTxt) : 0;
             bool hasIo = TryReadText(Path.Combine(dir, "io.stat"), out string ioTxt);
@@ -161,7 +164,8 @@ internal sealed class CgroupSampler
                 Pids: pids,
                 DiskBytes: null, // merged from DiskUsageSampler in ServerSampler.Sample()
                 RxBps: rxBps,
-                TxBps: txBps));
+                TxBps: txBps,
+                Memory: memory));
         }
 
         // Drop rate-state for servers that vanished this tick (stopped/removed) so the
@@ -237,6 +241,117 @@ internal sealed class CgroupSampler
     /// <summary>Single-integer cgroup file (<c>memory.current</c>, <c>pids.current</c>); 0 if non-numeric.</summary>
     internal static long ParseCounter(string content)
         => long.TryParse(content.AsSpan().Trim(), out long v) ? v : 0;
+
+    /// <summary>
+    /// The four sizing terms, read from one cgroup directory.
+    /// </summary>
+    /// <remarks>
+    /// Five small reads on top of the four this sampler already makes, all from the same directory
+    /// that has just been resolved and stat'd. <c>memory.max</c> is deliberately not among them: what
+    /// the ceiling is set to is the watchdog's fact, and reading it here would let a consumer mistake
+    /// this daemon for its author.
+    /// <para>
+    /// A cgroup without the memory controller exposes none of these files, and every field is
+    /// independently nullable — a kernel that reports <c>memory.stat</c> but no PSI produces a working
+    /// set and a null stall, rather than the whole record being dropped. All-null returns null: the
+    /// record would otherwise assert that memory was measured and found to be nothing.
+    /// </para>
+    /// </remarks>
+    private static ServerMemory? ReadMemory(string dir)
+    {
+        long? anon = TryReadText(Path.Combine(dir, "memory.stat"), out string statTxt)
+            ? ParseMemStatAnon(statTxt) : null;
+        long? swap = TryReadText(Path.Combine(dir, "memory.swap.current"), out string swapTxt)
+            ? ParseCounter(swapTxt) : null;
+        long? peak = TryReadText(Path.Combine(dir, "memory.peak"), out string peakTxt)
+            ? ParseCounter(peakTxt) : null;
+
+        long? oomKills = null, maxEvents = null;
+        if (TryReadText(Path.Combine(dir, "memory.events"), out string evTxt))
+            (oomKills, maxEvents) = ParseMemEvents(evTxt);
+
+        double? stallPct = null;
+        long? stallTotal = null;
+        if (TryReadText(Path.Combine(dir, "memory.pressure"), out string psiTxt))
+            (stallPct, stallTotal) = ParseMemPressureFull(psiTxt);
+
+        if (anon is null && swap is null && peak is null && oomKills is null && stallPct is null)
+            return null;
+
+        return new ServerMemory(anon, swap, peak, oomKills, maxEvents, stallPct, stallTotal);
+    }
+
+    /// <summary>
+    /// Anonymous bytes from a <c>memory.stat</c> body. Null when the field is absent — the file exists
+    /// on every memory-controlled cgroup, so a missing <c>anon</c> means a kernel that does not report
+    /// it rather than a workload holding nothing.
+    /// </summary>
+    internal static long? ParseMemStatAnon(string content)
+    {
+        foreach (var line in content.Split('\n'))
+        {
+            if (!line.StartsWith("anon ", StringComparison.Ordinal))
+                continue;
+            return long.TryParse(line.AsSpan(5).Trim(), out long v) ? v : null;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// <c>oom_kill</c> and <c>max</c> from a <c>memory.events</c> body — the two counters that say
+    /// the workload was refused memory it asked for.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ <c>oom_kill</c> is matched exactly, not by prefix: <c>oom_group_kill</c> is a different
+    /// counter for a different thing, and a <c>StartsWith</c> would fold one into the other.
+    /// </remarks>
+    internal static (long? OomKills, long? MaxEvents) ParseMemEvents(string content)
+    {
+        long? oomKill = null, max = null;
+        foreach (var line in content.Split('\n'))
+        {
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 2 || !long.TryParse(parts[1], out long v))
+                continue;
+            if (parts[0] == "oom_kill")
+                oomKill = v;
+            else if (parts[0] == "max")
+                max = v;
+        }
+        return (oomKill, max);
+    }
+
+    /// <summary>
+    /// The <c>full</c> line of a PSI <c>memory.pressure</c> body: <c>avg60</c> as a percentage and the
+    /// cumulative stall total in microseconds.
+    /// </summary>
+    /// <remarks>
+    /// <b><c>full</c>, not <c>some</c>.</b> <c>some</c> counts a window in which any task stalled,
+    /// which a healthy server touches constantly; <c>full</c> counts one in which every task did, and
+    /// is the line that means the workload was not running for want of memory.
+    /// </remarks>
+    internal static (double? AvgPct, long? TotalUsec) ParseMemPressureFull(string content)
+    {
+        foreach (var line in content.Split('\n'))
+        {
+            if (!line.StartsWith("full ", StringComparison.Ordinal))
+                continue;
+
+            double? avg = null;
+            long? total = null;
+            foreach (var tok in line.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (tok.StartsWith("avg60=", StringComparison.Ordinal)
+                    && double.TryParse(tok.AsSpan(6), NumberStyles.Float, CultureInfo.InvariantCulture, out double a))
+                    avg = a;
+                else if (tok.StartsWith("total=", StringComparison.Ordinal)
+                    && long.TryParse(tok.AsSpan(6), out long t))
+                    total = t;
+            }
+            return (avg, total);
+        }
+        return (null, null);
+    }
 
     /// <summary>
     /// CPU usage as a percentage of <em>one</em> core over the elapsed window. A

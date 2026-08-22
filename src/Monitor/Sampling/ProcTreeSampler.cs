@@ -30,8 +30,8 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// <c>/proc/&lt;pid&gt;/stat</c>, so the scan reads <c>stat</c> for <em>every</em> process on
 /// the host — it scales with host process count, not server count. It is therefore
 /// <b>gated</b>: when the watch-list has no native server the scan is skipped entirely.
-/// <c>statm</c> (RSS) and <c>io</c> are read only for PIDs in a tracked subtree — a tiny set —
-/// never for every host process.
+/// <c>statm</c> (RSS), <c>status</c> (anonymous RSS) and <c>io</c> are read only for PIDs in a
+/// tracked subtree — a tiny set — never for every host process.
 /// </para>
 /// <para>
 /// State (previous CPU/IO counters and each root's <c>starttime</c>) is mutated only on the
@@ -132,6 +132,8 @@ internal sealed partial class ProcTreeSampler
                     continue;
 
                 long cpuTicks = 0, rss = 0, ioRead = 0, ioWrite = 0;
+                long anon = 0;
+                bool hasAnon = false;
                 int pidCount = 0;
                 bool hasIo = false;
 
@@ -141,6 +143,11 @@ internal sealed partial class ProcTreeSampler
                     if (procs.TryGetValue(pid, out var pi))
                         cpuTicks += pi.CpuTicks;
                     rss += ReadRssBytes(pid);
+                    if (TryReadRssAnonBytes(pid, out long a))
+                    {
+                        anon += a;
+                        hasAnon = true;
+                    }
                     if (TryReadIo(pid, out long r, out long w))
                     {
                         ioRead += r;
@@ -196,7 +203,12 @@ internal sealed partial class ProcTreeSampler
                     // A native server with no live cgroup isn't under kgsm.slice, so the eBPF
                     // cgroup/skb meter never sees its packets → no per-server network here.
                     RxBps: null,
-                    TxBps: null));
+                    TxBps: null,
+                    // The working set is the one sizing term /proc can answer. A high-water mark, an
+                    // OOM counter and a pressure stall are all cgroup facts with no process-level
+                    // equivalent, so they stay null here rather than being approximated from a series
+                    // this sampler happens to have seen.
+                    Memory: hasAnon ? new ServerMemory(anon, null, null, null, null, null, null) : null));
             }
         }
 
@@ -245,6 +257,49 @@ internal sealed partial class ProcTreeSampler
         if (TryReadText(Path.Combine(_procRoot, pid.ToString(CultureInfo.InvariantCulture), "statm"), out string s))
             return ParseStatmRssPages(s) * Environment.SystemPageSize;
         return 0;
+    }
+
+    /// <summary>
+    /// Anonymous resident bytes for one pid, from <c>/proc/&lt;pid&gt;/status</c>'s <c>RssAnon</c>.
+    /// </summary>
+    /// <remarks>
+    /// A separate read from <see cref="ReadRssBytes"/>, which uses <c>statm</c> — that file's resident
+    /// field folds file-backed pages in with anonymous ones and cannot be decomposed. Like every other
+    /// per-pid read here it happens only for members of a tracked subtree.
+    /// <para>
+    /// Summing across the tree double-counts pages shared between a parent and its children, exactly as
+    /// the RSS sum above does. It is an upper bound and labelled as one; a kernel aggregator is what a
+    /// cgroup gives and this path is the fallback for servers that have none.
+    /// </para>
+    /// </remarks>
+    private bool TryReadRssAnonBytes(int pid, out long bytes)
+    {
+        if (TryReadText(Path.Combine(_procRoot, pid.ToString(CultureInfo.InvariantCulture), "status"), out string s)
+            && ParseStatusRssAnonKb(s) is { } kb)
+        {
+            bytes = kb * 1024;
+            return true;
+        }
+
+        bytes = 0;
+        return false;
+    }
+
+    /// <summary>Anonymous resident size in <em>kB</em> from a <c>/proc/&lt;pid&gt;/status</c> body's
+    /// <c>RssAnon</c> line, or null when the kernel does not break it out.</summary>
+    internal static long? ParseStatusRssAnonKb(string content)
+    {
+        foreach (var line in content.Split('\n'))
+        {
+            if (!line.StartsWith("RssAnon:", StringComparison.Ordinal))
+                continue;
+            var parts = line.AsSpan(8).Trim();
+            int sp = parts.IndexOf(' ');
+            if (sp > 0)
+                parts = parts[..sp];
+            return long.TryParse(parts, out long v) ? v : null;
+        }
+        return null;
     }
 
     private bool TryReadIo(int pid, out long read, out long write)

@@ -230,6 +230,15 @@ public sealed class MonitorSettings
         Min = Floors.MaintenanceMs, Unit = "ms")]
     public int? MaintenanceMs { get; set; }
 
+    /// <summary>Turns off the per-instance memory footprint: the accumulation stops and
+    /// <c>/footprint</c> is not served. On by default — it reads the frame the daemon already produces
+    /// and needs no privilege, no extra scrape and no other leaf.</summary>
+    /// <panel>Turn off the per-instance memory footprint — the accumulated record of what each game
+    /// server has been measured to hold. Metrics and history are unaffected, but nothing accumulates
+    /// while this is off, and that stretch is missing from the record permanently.</panel>
+    [LeafField("footprintDisabled", "Disable memory footprint", Group = "history")]
+    public bool? FootprintDisabled { get; set; }
+
     /// <summary>Whether to stop evaluating threshold rules entirely. Off by default. Independent of any
     /// individual rule's own <c>enabled</c> flag — this is the one switch that silences the whole source
     /// without editing the rules an operator tuned.</summary>

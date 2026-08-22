@@ -329,6 +329,16 @@
       "risk": "safe"
     },
     {
+      "key": "footprintDisabled",
+      "env": "Monitor__FootprintDisabled",
+      "label": "Disable memory footprint",
+      "description": "Turn off the per-instance memory footprint — the accumulated record of what each game server has been measured to hold. Metrics and history are unaffected, but nothing accumulates while this is off, and that stretch is missing from the record permanently.",
+      "group": "history",
+      "type": "bool",
+      "default": "false",
+      "risk": "safe"
+    },
+    {
       "key": "thresholdsDisabled",
       "env": "Monitor__ThresholdsDisabled",
       "label": "Disable threshold conditions",

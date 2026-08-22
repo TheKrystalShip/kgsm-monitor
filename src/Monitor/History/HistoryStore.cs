@@ -6,12 +6,69 @@ namespace TheKrystalShip.KGSM.Monitor.History;
 public readonly record struct HistoryRow(string Kind, string Id, string Metric, long Ts, double Value);
 
 /// <summary>
-/// The metrics-history store — the monitor is now the single source of truth for metrics history.
+/// One instance's accumulated memory footprint — the durable half of what the sampler measures.
+/// </summary>
+/// <remarks>
+/// <b>This outlives the series it is built from.</b> Samples are kept for a day and rollups for a
+/// month; an instance's footprint is a statement about its whole observed life, so it accumulates in
+/// place and is exempt from both prunes. Nothing here is re-derivable from the history tables once
+/// they have rolled past their horizon.
+/// <para>
+/// The four <c>Last*</c> fields are not part of the answer — they are the accumulator's own state,
+/// persisted so that a daemon restart does not re-count a counter it has already folded in or invent a
+/// run boundary out of its own downtime.
+/// </para>
+/// </remarks>
+/// <param name="InstanceId">The instance this record is about — the join key every per-server figure uses.</param>
+/// <param name="FirstSeen">Unix ms of the first observation behind this record.</param>
+/// <param name="LastSeen">Unix ms of the most recent observation.</param>
+/// <param name="Runs">Run boundaries observed, i.e. how many times this instance has been seen to
+/// start. Not incremented by a daemon restart, which is this daemon's event and not the instance's.</param>
+/// <param name="UptimeMs">Cumulative time this instance has been observed running. Time the daemon was
+/// down is not counted — the instance may well have been running, but this daemon did not see it.</param>
+/// <param name="Samples">Observations that carried a working set, which is what the mean divides by.</param>
+/// <param name="AnonMax">The largest working set observed (anonymous memory plus swap).</param>
+/// <param name="AnonSum">Sum of every working-set observation; divided by <paramref name="Samples"/> it
+/// is the mean. Held as a sum so the mean stays exact across an unbounded number of observations.</param>
+/// <param name="PeakBytes">The highest <c>memory.peak</c> observed, folded across runs.</param>
+/// <param name="OomKills">Total OOM kills, accumulated across the cgroup resets that zero the counter.</param>
+/// <param name="MaxEvents">Total times allocation hit the memory ceiling, accumulated the same way.</param>
+/// <param name="StallTotalUsec">Cumulative full-stall microseconds, accumulated the same way.</param>
+/// <param name="LastPeak">Accumulator state: the previous <c>memory.peak</c>, which going backwards is
+/// how a new cgroup — and therefore a new run — is recognised.</param>
+/// <param name="LastOomKills">Accumulator state: the OOM counter as last read, so only what is new is banked.</param>
+/// <param name="LastMaxEvents">Accumulator state: the ceiling-hit counter as last read.</param>
+/// <param name="LastStallTotal">Accumulator state: the PSI stall total as last read.</param>
+public readonly record struct FootprintRow(
+    string InstanceId,
+    long FirstSeen,
+    long LastSeen,
+    long Runs,
+    long UptimeMs,
+    long Samples,
+    double? AnonMax,
+    double AnonSum,
+    double? PeakBytes,
+    long OomKills,
+    long MaxEvents,
+    long StallTotalUsec,
+    double? LastPeak,
+    long? LastOomKills,
+    long? LastMaxEvents,
+    long? LastStallTotal);
+
+/// <summary>
+/// The metrics-history store — the monitor is the single source of truth for metrics history.
 /// Raw <c>Microsoft.Data.Sqlite</c> (ADO, hand-written SQL): EF Core is not AOT-safe, so the daemon
 /// persists via a single long-lived connection guarded by a write gate (SQLite is single-writer per
 /// file). Two tables: <c>sample</c> (raw, ~15s step, 24h retention) and <c>rollup</c> (5-min buckets,
 /// 30d retention). Unix-ms timestamps, composite PKs, no secondary indexes (the PK index serves the
 /// left-prefix range reads). WAL + INCREMENTAL auto-vacuum (auto-vacuum set before the tables exist).
+/// <para>
+/// Two further tables hold what outlives a retention horizon: <c>threshold_episode</c> (what fired) and
+/// <c>footprint</c> (what each instance has been measured to hold). ⚠ Neither is touched by the prune
+/// paths, and a <c>footprint</c> row is removed only when the instance itself is gone.
+/// </para>
 /// </summary>
 public sealed class HistoryStore : IDisposable
 {
@@ -73,6 +130,15 @@ public sealed class HistoryStore : IDisposable
                       producer TEXT NOT NULL, close_reason TEXT);
                     CREATE INDEX IF NOT EXISTS ix_episode_opened ON threshold_episode (opened_ts);
                     CREATE INDEX IF NOT EXISTS ix_episode_closed ON threshold_episode (closed_ts);
+                    CREATE TABLE IF NOT EXISTS footprint (
+                      instance_id TEXT PRIMARY KEY,
+                      first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL,
+                      runs INTEGER NOT NULL, uptime_ms INTEGER NOT NULL, samples INTEGER NOT NULL,
+                      anon_max REAL, anon_sum REAL NOT NULL, peak_bytes REAL,
+                      oom_kills INTEGER NOT NULL, max_events INTEGER NOT NULL,
+                      stall_total_usec INTEGER NOT NULL,
+                      last_peak REAL, last_oom_kills INTEGER, last_max_events INTEGER,
+                      last_stall_total INTEGER);
                     """;
                 await ddl.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
@@ -157,6 +223,155 @@ public sealed class HistoryStore : IDisposable
             int rows = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             if (rows > 0)
                 _logger.LogDebug("metrics history: rolled up {Count} buckets (step={StepMin}min)", rows, stepMinutes);
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Read every footprint row. Small by construction — one row per instance this host has
+    /// ever run — so it is returned whole rather than paged.</summary>
+    public async Task<IReadOnlyList<FootprintRow>> QueryFootprintsAsync(CancellationToken ct = default)
+    {
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            SqliteConnection conn = await EnsureAsync(ct).ConfigureAwait(false);
+            await using SqliteCommand cmd = conn.CreateCommand();
+            cmd.CommandText =
+                """
+                SELECT instance_id, first_seen, last_seen, runs, uptime_ms, samples,
+                       anon_max, anon_sum, peak_bytes, oom_kills, max_events, stall_total_usec,
+                       last_peak, last_oom_kills, last_max_events, last_stall_total
+                FROM footprint ORDER BY instance_id
+                """;
+
+            var rows = new List<FootprintRow>();
+            await using SqliteDataReader r = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await r.ReadAsync(ct).ConfigureAwait(false))
+            {
+                rows.Add(new FootprintRow(
+                    InstanceId: r.GetString(0),
+                    FirstSeen: r.GetInt64(1),
+                    LastSeen: r.GetInt64(2),
+                    Runs: r.GetInt64(3),
+                    UptimeMs: r.GetInt64(4),
+                    Samples: r.GetInt64(5),
+                    AnonMax: r.IsDBNull(6) ? null : r.GetDouble(6),
+                    AnonSum: r.GetDouble(7),
+                    PeakBytes: r.IsDBNull(8) ? null : r.GetDouble(8),
+                    OomKills: r.GetInt64(9),
+                    MaxEvents: r.GetInt64(10),
+                    StallTotalUsec: r.GetInt64(11),
+                    LastPeak: r.IsDBNull(12) ? null : r.GetDouble(12),
+                    LastOomKills: r.IsDBNull(13) ? null : r.GetInt64(13),
+                    LastMaxEvents: r.IsDBNull(14) ? null : r.GetInt64(14),
+                    LastStallTotal: r.IsDBNull(15) ? null : r.GetInt64(15)));
+            }
+            return rows;
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Write a batch of footprint rows in one transaction, replacing each by instance id.</summary>
+    public async Task WriteFootprintsAsync(IReadOnlyList<FootprintRow> rows, CancellationToken ct = default)
+    {
+        if (rows.Count == 0) return;
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            SqliteConnection conn = await EnsureAsync(ct).ConfigureAwait(false);
+            await using SqliteTransaction tx = (SqliteTransaction)await conn.BeginTransactionAsync(ct).ConfigureAwait(false);
+            await using (SqliteCommand cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText =
+                    """
+                    INSERT OR REPLACE INTO footprint
+                      (instance_id, first_seen, last_seen, runs, uptime_ms, samples,
+                       anon_max, anon_sum, peak_bytes, oom_kills, max_events, stall_total_usec,
+                       last_peak, last_oom_kills, last_max_events, last_stall_total)
+                    VALUES ($id,$first,$last,$runs,$uptime,$samples,
+                            $anonMax,$anonSum,$peak,$oom,$max,$stall,
+                            $lastPeak,$lastOom,$lastMax,$lastStall)
+                    """;
+                SqliteParameter id = cmd.Parameters.Add("$id", SqliteType.Text);
+                SqliteParameter first = cmd.Parameters.Add("$first", SqliteType.Integer);
+                SqliteParameter last = cmd.Parameters.Add("$last", SqliteType.Integer);
+                SqliteParameter runs = cmd.Parameters.Add("$runs", SqliteType.Integer);
+                SqliteParameter uptime = cmd.Parameters.Add("$uptime", SqliteType.Integer);
+                SqliteParameter samples = cmd.Parameters.Add("$samples", SqliteType.Integer);
+                SqliteParameter anonMax = cmd.Parameters.Add("$anonMax", SqliteType.Real);
+                SqliteParameter anonSum = cmd.Parameters.Add("$anonSum", SqliteType.Real);
+                SqliteParameter peak = cmd.Parameters.Add("$peak", SqliteType.Real);
+                SqliteParameter oom = cmd.Parameters.Add("$oom", SqliteType.Integer);
+                SqliteParameter max = cmd.Parameters.Add("$max", SqliteType.Integer);
+                SqliteParameter stall = cmd.Parameters.Add("$stall", SqliteType.Integer);
+                SqliteParameter lastPeak = cmd.Parameters.Add("$lastPeak", SqliteType.Real);
+                SqliteParameter lastOom = cmd.Parameters.Add("$lastOom", SqliteType.Integer);
+                SqliteParameter lastMax = cmd.Parameters.Add("$lastMax", SqliteType.Integer);
+                SqliteParameter lastStall = cmd.Parameters.Add("$lastStall", SqliteType.Integer);
+
+                foreach (FootprintRow row in rows)
+                {
+                    id.Value = row.InstanceId;
+                    first.Value = row.FirstSeen;
+                    last.Value = row.LastSeen;
+                    runs.Value = row.Runs;
+                    uptime.Value = row.UptimeMs;
+                    samples.Value = row.Samples;
+                    anonMax.Value = (object?)row.AnonMax ?? DBNull.Value;
+                    anonSum.Value = row.AnonSum;
+                    peak.Value = (object?)row.PeakBytes ?? DBNull.Value;
+                    oom.Value = row.OomKills;
+                    max.Value = row.MaxEvents;
+                    stall.Value = row.StallTotalUsec;
+                    lastPeak.Value = (object?)row.LastPeak ?? DBNull.Value;
+                    lastOom.Value = (object?)row.LastOomKills ?? DBNull.Value;
+                    lastMax.Value = (object?)row.LastMaxEvents ?? DBNull.Value;
+                    lastStall.Value = (object?)row.LastStallTotal ?? DBNull.Value;
+                    await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                }
+            }
+            await tx.CommitAsync(ct).ConfigureAwait(false);
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// Drop footprint rows for instances that no longer exist, given the ids that currently do.
+    /// </summary>
+    /// <remarks>
+    /// <b>The caller passes what exists, not what is running.</b> A stopped instance is still an
+    /// instance and its accumulated footprint is exactly what a later comparison needs; what this
+    /// removes is the id of an instance that has been uninstalled.
+    /// <para>
+    /// ⚠ <b>An empty set deletes nothing.</b> The watch-list is empty both when every instance has been
+    /// removed and when the engine could not be reached to ask — and those must not look alike to a
+    /// statement that drops rows. The first case costs some stale rows until an instance exists again;
+    /// treating the second as authoritative would erase the record this feature is for.
+    /// </para>
+    /// </remarks>
+    public async Task<int> ReconcileFootprintsAsync(IReadOnlyCollection<string> liveIds, CancellationToken ct = default)
+    {
+        if (liveIds.Count == 0) return 0;
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            SqliteConnection conn = await EnsureAsync(ct).ConfigureAwait(false);
+            await using SqliteCommand cmd = conn.CreateCommand();
+            var names = new List<string>(liveIds.Count);
+            int i = 0;
+            foreach (string live in liveIds)
+            {
+                string name = $"$k{i++}";
+                names.Add(name);
+                cmd.Parameters.AddWithValue(name, live);
+            }
+            cmd.CommandText = $"DELETE FROM footprint WHERE instance_id NOT IN ({string.Join(",", names)})";
+            int deleted = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            if (deleted > 0)
+                _logger.LogInformation("footprint: dropped {Count} row(s) for instances that no longer exist", deleted);
+            return deleted;
         }
         finally { _gate.Release(); }
     }

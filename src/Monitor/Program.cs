@@ -129,6 +129,12 @@ if (options.HistoryEnabled)
 {
     builder.Services.AddSingleton<HistoryStore>();
     builder.Services.AddHostedService<MetricsPersistService>();
+
+    // The durable half of the same measurement. The series above answer "what did this look like last
+    // week"; this answers "what has this instance ever been measured to hold", which no window can once
+    // it has rolled past its horizon.
+    if (options.FootprintEnabled)
+        builder.Services.AddHostedService<FootprintRecorder>();
 }
 
 // The rollup/prune/vacuum loop for metrics history. Its outcome holder is registered unconditionally:
@@ -164,20 +170,21 @@ builder.Services.AddSingleton(sp => new LeafLifecycle(
     clock: null,
     startedAt: () => startedAt));
 
+// This daemon's own event journal. Nothing else on this host takes these measurements, so nothing else
+// can honestly say a value crossed a line, or that the kernel refused a server the memory it asked for —
+// recording them here puts the fact where it happened, instead of leaving another component to poll them
+// out of a database and transcribe them into its own store.
+//
+// Registered with history rather than with thresholds: an OOM kill is recorded by the footprint recorder,
+// which has nothing to do with whether any rule is being evaluated.
+if (options.HistoryEnabled)
+{
+    builder.Services.AddSingleton<MonitorJournal>();
+}
+
 if (options.ThresholdsEnabled && options.HistoryEnabled)
 {
-    // This daemon's own event journal. Nothing else on this host takes these measurements, so nothing
-    // else can honestly say a value crossed a line — recording them here puts the fact where it
-    // happened, instead of leaving another component to poll them out of a database and transcribe
-    // them into its own store.
     //
-    // The producer id decides everything else: the directory a reader scans for, the version stamped
-    // on every event, and the directory's creation during startup rather than on the first episode —
-    // a daemon that has simply not breached anything yet would otherwise be indistinguishable from one
-    // that writes no journal at all, and would stay invisible until both an episode fired and every
-    // reader restarted.
-    builder.Services.AddSingleton<MonitorJournal>();
-
     builder.Services.AddHostedService<EpisodeRecorder>();
 }
 else if (options.ThresholdsEnabled)
@@ -249,6 +256,20 @@ if (options.HistoryEnabled)
             return Results.BadRequest();
         MetricsHistoryResponse resp = await store.QueryHistoryAsync(entityKind, id, range, ct);
         return Results.Json(resp, MonitorHistoryJsonContext.Default.MetricsHistoryResponse);
+    });
+}
+
+// What each instance has been measured to hold, accumulated over its whole observed life — the question
+// /metrics/history stops being able to answer the moment a window rolls past its retention horizon.
+// Mapped with history on, for the same reason the episode endpoint is: with no store there is nothing
+// accumulated, and an empty list would claim every instance is unmeasured rather than unrecorded.
+if (options.HistoryEnabled && options.FootprintEnabled)
+{
+    app.MapGet("/footprint", async (HistoryStore store, CancellationToken ct) =>
+    {
+        IReadOnlyList<FootprintRow> rows = await store.QueryFootprintsAsync(ct);
+        var dto = new FootprintResponse([.. rows.Select(FootprintDto.From)]);
+        return Results.Json(dto, MonitorHistoryJsonContext.Default.FootprintResponse);
     });
 }
 

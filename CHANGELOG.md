@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — memory measured in the terms that size a server
+
+Every per-server frame carries `memory`: the working set (`memory.stat` `anon` plus
+`memory.swap.current`), the kernel's own high-water mark (`memory.peak`), the counters that say the
+workload was refused memory it asked for (`memory.events` `oom_kill` and `max`), and the share of the
+last minute every task in the cgroup spent stalled on memory (PSI `memory.pressure` `full`). A server
+sampled from a `/proc` tree reports the working set alone — a high-water mark, an OOM counter and a
+stall are cgroup facts with no process-level equivalent, so they stay null rather than being
+approximated. `memAnonBytes`, `memPeakBytes` and `memStallPct` join the history series.
+
+⚠ **None of this is `memBytes`, and the difference is the point.** That figure is `memory.current`,
+which charges reclaimable page cache — measured here, 763 MiB (14.7%) of one live server's charge, most
+of it cache the kernel drops under any pressure at all. It is the honest thing to chart and the wrong
+thing to size against, because cache grows to fill whatever allowance it is given.
+
+`GET /footprint` serves what each instance has been measured to hold over its whole observed life:
+working-set peak and mean, the highest `memory.peak` any run reached, total OOM kills and ceiling hits,
+stall seconds, runs, and the hours behind all of it. It accumulates in a `footprint` table that no prune
+touches — samples last a day and rollups a month, and a question about a two-week-old world outlives
+both. A row is dropped only when the instance itself is gone, and never on an empty watch-list, which
+means "the engine did not answer" as often as it means "nothing is installed". Off with
+`Monitor__FootprintDisabled`.
+
+⚠ **An OOM kill is announced, not accumulated in silence.** `server_memory_oom` is written to this
+daemon's journal the moment the counter moves. It is the one memory fact that is not an inference — the
+kernel refused a server the memory it asked for, which bounds what that server needs from below rather
+than describing a sample — so it needs no window, no coverage and no judgment about load. It is not an
+exit code of 137, which is a SIGKILL from any source.
+
+⚠ **A cgroup that dies inside one sample interval takes its counters with it.** The counters live in
+the cgroup and are gone when it is torn down, so an OOM kill during boot — measured here: an instance
+capped below its heap, spawned and killed inside the same second — is never counted. What this reports
+is OOM kills in cgroups that survive at least one tick, which is the case that matters for sizing (a
+server growing into its cap over hours); a server that cannot start under its cap fails its start, and
+the watchdog reports that.
+
+⚠ **The record states what was observed, never what was inferred.** Time this daemon was down is not
+counted as uptime. A counter read for the first time is adopted as a baseline rather than banked,
+because whatever it holds happened at a time the record cannot state. And an instance that stops and
+starts again entirely between two ticks is one run boundary this misses — both signals for it (an
+absence in the frame, and the kernel's high-water mark going backwards) need the gap to be visible.
+
 ### Added — GPU, measured per device and per leaf
 
 The frame carries `gpu`: every device on the host (memory, utilisation, temperature, power) and every

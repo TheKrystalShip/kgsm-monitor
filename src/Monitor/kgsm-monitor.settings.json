@@ -22,6 +22,7 @@
     "RollupStepMin": 5,
     "RollupRetentionDays": 30,
     "MaintenanceMs": 60000,
+    "FootprintDisabled": false,
     "ThresholdsDisabled": false,
     "ThresholdPolicyPath": "/var/lib/kgsm-monitor/thresholds.json"
   },

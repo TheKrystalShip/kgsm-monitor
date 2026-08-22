@@ -1,13 +1,14 @@
 using System.Text.Json;
 using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.Monitor.Contracts;
 using TheKrystalShip.KGSM.Monitor.Thresholds;
 using TheKrystalShip.KGSM.Services;
 
 namespace TheKrystalShip.KGSM.Monitor.History;
 
 /// <summary>
-/// Records the threshold facts this daemon's own measurements established, in this daemon's own event
-/// journal.
+/// Records the facts this daemon's own measurements established — a value crossing a line it watches,
+/// and a server the kernel refused memory to — in this daemon's own event journal.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -43,6 +44,9 @@ public sealed class MonitorJournal(IEventJournalWriter writer, ILogger<MonitorJo
     /// <summary>A firing condition stopped firing — which is not always a recovery.</summary>
     public const string ClearedEvent = "host_threshold_cleared";
 
+    /// <summary>The kernel killed a process in a game server's cgroup for want of memory.</summary>
+    public const string ServerOomEvent = "server_memory_oom";
+
     /// <summary>
     /// Records one episode transition — an opening or a closing, whichever it is.
     /// </summary>
@@ -58,6 +62,38 @@ public sealed class MonitorJournal(IEventJournalWriter writer, ILogger<MonitorJo
 
         Record(closed ? ClearedEvent : BreachedEvent, w => WritePayload(w, t, closed));
     }
+
+    /// <summary>
+    /// Records that the kernel killed a process in one server's cgroup for want of memory.
+    /// </summary>
+    /// <remarks>
+    /// <b>The one memory fact that is not an inference.</b> Every other reading here describes what a
+    /// server was using; this one says it asked for memory and was refused, which establishes a lower
+    /// bound on what it needs rather than describing a sample. It needs no window, no coverage and no
+    /// judgment about load, which is why it is announced the moment it is counted instead of waiting for
+    /// something to accumulate enough evidence to conclude it.
+    /// <para>
+    /// ⚠ Not the same as an exit code of 137. That is a SIGKILL from any source; this is the kernel's own
+    /// counter, in the cgroup it happened in.
+    /// </para>
+    /// </remarks>
+    /// <param name="instance">The instance whose cgroup it happened in.</param>
+    /// <param name="kills">Kills counted since this daemon last read the counter.</param>
+    /// <param name="total">Kills this host has counted for this instance across every run.</param>
+    /// <param name="memory">The reading the kill was counted in, so a reader has the state beside the fact.</param>
+    public void RecordOom(string instance, long kills, long total, ServerMemory memory)
+        => Record(ServerOomEvent, w =>
+        {
+            w.WriteString("Instance", instance);
+            w.WriteNumber("Kills", kills);
+            w.WriteNumber("TotalKills", total);
+            if (memory.AnonBytes is { } anon)
+                w.WriteNumber("AnonBytes", anon);
+            if (memory.PeakBytes is { } peak)
+                w.WriteNumber("PeakBytes", peak);
+            if (memory.MaxEvents is { } max)
+                w.WriteNumber("MaxEvents", max);
+        });
 
     /// <summary>Writes the payload both events share, plus the half that differs.</summary>
     private static void WritePayload(Utf8JsonWriter w, EpisodeTransition t, bool closed)

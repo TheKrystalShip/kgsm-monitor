@@ -55,6 +55,22 @@ public sealed class ServerSampler(
     /// <remarks>False until the first sample has probed the pin.</remarks>
     public bool NetworkMeterAvailable => _cgroup.NetworkMeterAvailable;
 
+    /// <summary>
+    /// Every instance this daemon knows exists, running or not.
+    /// </summary>
+    /// <remarks>
+    /// The resync list, which is the engine's answer to what is installed — deliberately not the set of
+    /// instances in the latest frame, which holds only the running ones. A consumer distinguishing "this
+    /// instance is gone" from "this instance is stopped" needs the first and would be wrong with the
+    /// second. Empty until the initial resync lands, and empty again if the engine cannot be reached, so
+    /// a caller acting on absence has to treat empty as "not answered".
+    /// <para>
+    /// Materialised rather than projected: the caller reads it off the sampling thread while the drain
+    /// loop can be swapping the dictionary underneath, and a lazy view would be enumerating the old one.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyCollection<string> WatchedIds => [.. _watch.Keys];
+
     // Slice 3: the native fallback. Native servers whose cgroup is not live (no cgroup_path,
     // or its kgsm.slice/<inst> dir absent) are invisible to _cgroup; this reads their /proc
     // process tree instead. The two samplers partition the watch-list on the same liveness

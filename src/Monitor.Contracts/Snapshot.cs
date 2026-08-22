@@ -206,6 +206,11 @@ public sealed record SensorReading(string Chip, string? Label, double ValueC);
 /// <paramref name="IoReadBps"/>.
 /// </param>
 /// <param name="TxBps">Per-server network <em>transmit</em> throughput, bytes/sec, or null (see <paramref name="RxBps"/>).</param>
+/// <param name="Memory">
+/// The memory counters that describe what this server <em>holds</em> and whether it is <em>short</em>,
+/// as opposed to <see cref="MemBytes"/>, which is what it is charged for. <c>null</c> when the kind
+/// being sampled exposes none of them. See <see cref="ServerMemory"/>.
+/// </param>
 public sealed record ServerMetrics(
     string Id,
     string Name,
@@ -217,7 +222,71 @@ public sealed record ServerMetrics(
     int Pids,
     long? DiskBytes,
     long? RxBps,
-    long? TxBps);
+    long? TxBps,
+    ServerMemory? Memory = null);
+
+/// <summary>
+/// One server's memory in the four terms that distinguish a workload that is <em>using</em> memory
+/// from one that is <em>short</em> of it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Why this is not <see cref="ServerMetrics.MemBytes"/>.</b> That figure is <c>memory.current</c>,
+/// which charges reclaimable page cache — a server streaming saves and map chunks fills whatever
+/// allowance it is given, so the number grows toward the ceiling rather than toward what the workload
+/// holds. It is the honest thing to chart and the wrong thing to size against. These four are the
+/// sizing terms.
+/// </para>
+/// <para>
+/// <b>Every field is nullable and null means not measured.</b> A server sampled from a <c>/proc</c>
+/// process tree has no cgroup, so it can report a working set and nothing else; a cgroup without the
+/// memory controller reports none of them. Absent beats invented, as everywhere else in this contract.
+/// </para>
+/// </remarks>
+/// <param name="AnonBytes">
+/// Anonymous memory — the pages the workload actually holds, with page cache excluded
+/// (<c>memory.stat</c> <c>anon</c>; summed <c>RssAnon</c> for a <c>/proc</c> tree). The figure a
+/// requirement is reasoned from.
+/// </param>
+/// <param name="SwapBytes">
+/// What has been pushed to swap (<c>memory.swap.current</c>). Part of the working set: a server whose
+/// pages moved to disk still holds them, and reading <see cref="AnonBytes"/> alone would report the
+/// eviction as a shrinking footprint.
+/// </param>
+/// <param name="PeakBytes">
+/// The kernel's own high-water mark for this cgroup (<c>memory.peak</c>). Immune to sampling gaps —
+/// a spike between two ticks is invisible to a sampled series and present here.
+/// ⚠ It is scoped to the cgroup, so it resets on every restart: this is a <em>per-run</em> maximum,
+/// and accumulating one across runs is the reader's job.
+/// </param>
+/// <param name="OomKills">
+/// How many processes the kernel has killed in this cgroup for want of memory (<c>memory.events</c>
+/// <c>oom_kill</c>). Non-zero is not an inference: this server was refused memory it asked for, which
+/// establishes a lower bound on what it needs. Resets with the cgroup, like <paramref name="PeakBytes"/>.
+/// </param>
+/// <param name="MaxEvents">
+/// How many times allocation hit the cgroup's <c>memory.max</c> ceiling (<c>memory.events</c>
+/// <c>max</c>). Reclaim under a cap that succeeded — the warning that precedes
+/// <paramref name="OomKills"/>, and the evidence that a cap is binding even when nothing died.
+/// </param>
+/// <param name="StallPct">
+/// The share of the last 60 seconds in which <em>every</em> task in the cgroup was stalled waiting on
+/// memory (PSI <c>memory.pressure</c>, <c>full avg60</c>). This is the difference between a server
+/// using a lot of memory and one that is short of it: a large working set with a zero here is a server
+/// that is comfortable.
+/// </param>
+/// <param name="StallTotalUsec">
+/// Cumulative full-stall time in microseconds (PSI <c>total</c>), for a reader that wants stall over a
+/// window of its own choosing rather than the kernel's fixed averages. Resets with the cgroup.
+/// </param>
+public sealed record ServerMemory(
+    long? AnonBytes,
+    long? SwapBytes,
+    long? PeakBytes,
+    long? OomKills,
+    long? MaxEvents,
+    double? StallPct,
+    long? StallTotalUsec);
 
 /// <summary>
 /// One watched instance's on-disk footprint, published <em>independently of run state</em>.

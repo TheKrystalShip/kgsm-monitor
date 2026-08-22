@@ -90,6 +90,20 @@ public sealed class MetricsPersistService : BackgroundService
             rows.Add(new HistoryRow("server", sm.Id, "rxBps", ts, rx));
         if (sm.TxBps is { } tx)
             rows.Add(new HistoryRow("server", sm.Id, "txBps", ts, tx));
+
+        // The sizing terms as series, so a window of them can be charted and queried like any other
+        // metric. The OOM and max counters are deliberately NOT here: a monotonic counter makes a
+        // meaningless curve (and a meaningless rollup average), so what it establishes is accumulated
+        // into the footprint record and announced as an event instead.
+        if (sm.Memory is { } mem)
+        {
+            if (mem.AnonBytes is { } anon)
+                rows.Add(new HistoryRow("server", sm.Id, "memAnonBytes", ts, anon));
+            if (mem.PeakBytes is { } peak)
+                rows.Add(new HistoryRow("server", sm.Id, "memPeakBytes", ts, peak));
+            if (mem.StallPct is { } stall)
+                rows.Add(new HistoryRow("server", sm.Id, "memStallPct", ts, Math.Round(stall, 2)));
+        }
     }
 
     /// <summary>

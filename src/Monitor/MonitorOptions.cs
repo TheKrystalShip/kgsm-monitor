@@ -166,6 +166,12 @@ public sealed class MonitorOptions
     /// Default 60s, floor 1s.</summary>
     public int MaintenanceMs { get; init; } = 60_000;
 
+    /// <summary>Whether the monitor accumulates a per-instance memory footprint and serves
+    /// <c>/footprint</c>. On by default: it reads the frame the daemon already produces and costs one
+    /// small table. With it off the endpoint is not wired and nothing accumulates — a later reader then
+    /// finds no record rather than a short one.</summary>
+    public bool FootprintEnabled { get; init; } = true;
+
 
 
 
@@ -212,6 +218,7 @@ public sealed class MonitorOptions
             RollupStepMin = Floor(s.RollupStepMin ?? defaults.RollupStepMin, MonitorSettings.Floors.Retention),
             RollupRetentionDays = Floor(s.RollupRetentionDays ?? defaults.RollupRetentionDays, MonitorSettings.Floors.Retention),
             MaintenanceMs = Floor(s.MaintenanceMs ?? defaults.MaintenanceMs, MonitorSettings.Floors.MaintenanceMs),
+            FootprintEnabled = !(s.FootprintDisabled ?? !defaults.FootprintEnabled),
             ThresholdsEnabled = !(s.ThresholdsDisabled ?? !defaults.ThresholdsEnabled),
             ThresholdPolicyPath = Or(s.ThresholdPolicyPath, defaults.ThresholdPolicyPath),
         };

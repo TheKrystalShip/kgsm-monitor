@@ -1,0 +1,5 @@
+Name:	PalServer.sh
+VmRSS:	    5556 kB
+RssAnon:	     308 kB
+RssFile:	    5248 kB
+RssShmem:	       0 kB
