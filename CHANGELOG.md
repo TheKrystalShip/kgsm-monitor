@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — the packaged meter carries the compiled eBPF object (`2.13.0`)
+
+`packaging/PKGBUILD`'s `build()` compiles `net_meter.bpf.o` when the publish stage does not already
+carry one and clang is on the packaging machine. Without it the package shipped `net_meter.bpf.c`
+and `net-meter-setup.sh` fell back to compiling on the node — making clang a runtime dependency the
+package never declared, and failing outright on a node that has none. Compiling on the packaging
+machine produces the same object wherever it runs, because the program is deliberately not CO-RE.
+
+### Changed — `kgsm-monitor-net-meter` is on the node's selection menu (`2.13.0`)
+
+It carries `groups=('kgsm-node')`. It is preset-enabled and is what makes per-server `rxBps`/`txBps`
+a measurement rather than a null, so a node choosing the monitor is offered it in the same list
+rather than having to know the package name.
+
 ### Changed — a packaged install enables and starts the monitor and the meter (`2.12.0`)
 
 `packaging/kgsm-monitor.install` and `packaging/kgsm-monitor-net-meter.install` apply kgsm-base's

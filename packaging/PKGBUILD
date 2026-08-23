@@ -27,13 +27,24 @@ pkgver() {
 }
 
 build() {
-    local stage; stage="$(_stage)"
+    local stage repo; stage="$(_stage)"; repo="${startdir}/.."
     [[ -f "${stage}/kgsm-monitor" ]] || {
         printf '\n  no publish output at %s\n' "$stage" >&2
         printf '  build it first:  dotnet publish src/Monitor/Monitor.csproj -c Release -r linux-x64 -o artifacts/publish\n' >&2
         printf '  or point KGSM_STAGE at an existing one.\n\n' >&2
         return 1
     }
+
+    # The eBPF object, compiled here when the stage does not already carry one. It is what keeps
+    # clang off every node: without it net-meter-setup.sh falls back to compiling on the host, and
+    # the node needs a compiler the package never declared. Compiling on the packaging machine —
+    # this one or a CI runner — produces the same object either way, because the program is
+    # deliberately not CO-RE: it touches only the uapi struct __sk_buff, needs no vmlinux.h, and one
+    # object loads on any node's kernel. -g emits the BTF the typed map needs.
+    if [[ ! -f "${stage}/net_meter.bpf.o" ]] && command -v clang >/dev/null; then
+        clang -O2 -g -target bpf -c "${repo}/src/Monitor/bpf/net_meter.bpf.c" -o net_meter.bpf.o
+        file net_meter.bpf.o | grep -q eBPF
+    fi
 }
 
 package_kgsm-monitor() {
@@ -86,6 +97,9 @@ package_kgsm-monitor() {
 package_kgsm-monitor-net-meter() {
     pkgdesc="KGSM per-server network meter — eBPF cgroup/skb byte counter for kgsm-monitor"
     arch=('any')   # a script plus an eBPF object; nothing here is x86_64-specific
+    # On the selection menu: it is preset-enabled and is what makes per-server rxBps/txBps a
+    # measurement rather than a null, so a node choosing the monitor is offered it in the same list.
+    groups=('kgsm-node')
     depends=('kgsm-base' 'kgsm-monitor' 'bpf')
     optdepends=('kgsm-watchdog: owns kgsm.slice, the cgroup the meter attaches to')
     install="kgsm-monitor-net-meter.install"
@@ -105,13 +119,16 @@ package_kgsm-monitor-net-meter() {
     # anywhere loads on any node's kernel.
     if [[ -f "${stage}/net_meter.bpf.o" ]]; then
         install -Dm644 "${stage}/net_meter.bpf.o" "${pkgdir}/opt/${pkgbase}/net_meter.bpf.o"
+    elif [[ -f "${srcdir}/net_meter.bpf.o" ]]; then
+        install -Dm644 "${srcdir}/net_meter.bpf.o" "${pkgdir}/opt/${pkgbase}/net_meter.bpf.o"
     elif [[ -f "${repo}/src/Monitor/bpf/net_meter.bpf.o" ]]; then
         install -Dm644 "${repo}/src/Monitor/bpf/net_meter.bpf.o" "${pkgdir}/opt/${pkgbase}/net_meter.bpf.o"
     else
-        # Without one the setup script falls back to clang, which makes clang a runtime dependency
-        # of a node. CI is expected to build the object; warn loudly rather than ship a package that
-        # quietly needs a compiler.
-        warning "no net_meter.bpf.o found — the installed meter will need clang on the host"
+        # Reached only on a packaging machine with no clang and a stage that carries no object.
+        # Without one the setup script falls back to compiling on the node, which makes clang a
+        # runtime dependency this package never declared — so warn loudly rather than ship that
+        # quietly, and carry the source so the fallback has something to compile.
+        warning "no net_meter.bpf.o and no clang — the installed meter will need clang on the host"
         install -Dm644 "${repo}/src/Monitor/bpf/net_meter.bpf.c" \
             "${pkgdir}/opt/${pkgbase}/net_meter.bpf.c"
     fi
