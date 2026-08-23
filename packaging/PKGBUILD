@@ -12,7 +12,7 @@
 
 pkgbase=kgsm-monitor
 pkgname=('kgsm-monitor' 'kgsm-monitor-net-meter')
-pkgver=2.5.0
+pkgver=2.12.0
 pkgrel=1
 arch=('x86_64')
 url="https://github.com/TheKrystalShip/kgsm-monitor"
@@ -39,8 +39,11 @@ build() {
 package_kgsm-monitor() {
     pkgdesc="KGSM host and per-server metrics daemon"
     groups=('kgsm-node')
-    depends=('systemd')
+    # kgsm-base carries the kgsm service account this unit runs as, the /var/lib/kgsm tree it reads
+    # the leaf descriptors and journals from, and the preset policy deciding whether it runs here.
+    depends=('kgsm-base' 'systemd')
     backup=('etc/kgsm-monitor/kgsm-monitor.env')
+    install="kgsm-monitor.install"
     optdepends=(
         'kgsm: lists instances, which is what gives per-server metrics a watch-list'
         'kgsm-watchdog: owns kgsm.slice, where native servers live'
@@ -65,9 +68,6 @@ package_kgsm-monitor() {
     install -Dm644 "${repo}/deploy/kgsm-monitor.service" \
         "${pkgdir}/usr/lib/systemd/system/kgsm-monitor.service"
 
-    install -Dm644 "${repo}/deploy/sysusers.d/kgsm-monitor.conf" \
-        "${pkgdir}/usr/lib/sysusers.d/kgsm-monitor.conf"
-
     # Operator overrides. Seeded from the committed example — every knob commented — and listed in
     # backup=(), so an upgrade writes .pacnew beside an edited file rather than over it. Root-owned
     # 0640 is correct rather than strict: systemd reads EnvironmentFile= as root before dropping to
@@ -86,7 +86,7 @@ package_kgsm-monitor() {
 package_kgsm-monitor-net-meter() {
     pkgdesc="KGSM per-server network meter — eBPF cgroup/skb byte counter for kgsm-monitor"
     arch=('any')   # a script plus an eBPF object; nothing here is x86_64-specific
-    depends=('kgsm-monitor' 'bpf')
+    depends=('kgsm-base' 'kgsm-monitor' 'bpf')
     optdepends=('kgsm-watchdog: owns kgsm.slice, the cgroup the meter attaches to')
     install="kgsm-monitor-net-meter.install"
 

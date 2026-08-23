@@ -1,18 +1,18 @@
-# Nothing here loads BPF or enables a unit.
+# The preset policy in kgsm-base enables this unit; applying it is symlink manipulation on disk, so
+# it works during the transaction and in a chroot alike. Loading BPF is the unit's own job, and
+# starting it is the node's post-transaction hook's, which is where a running system is available.
 #
-# pacman's own hooks already create the service account, the state directories and reload the unit
-# files, so repeating that would be noise. Enabling is the administrator's call — the node bootstrap
-# does it.
+# post_install only. An administrator who disabled this unit keeps it disabled across every later
+# version — re-presetting on upgrade would quietly undo that.
 
 post_install() {
+    systemctl preset kgsm-net-meter.service >/dev/null 2>&1 || true
+
     cat <<'MSG'
 
-  The network meter is installed but not attached.
-
-    systemctl enable --now kgsm-net-meter.service
-
-  It attaches to /sys/fs/cgroup/kgsm.slice, so kgsm-watchdog has to have created the slice first;
-  the unit is ordered after it and re-runs whenever the watchdog starts.
+  The network meter attaches to /sys/fs/cgroup/kgsm.slice, so kgsm-watchdog has to have created that
+  slice first. The unit is ordered after the watchdog and wanted by it, so it attaches on the
+  watchdog's next start and re-attaches on every one after that.
 
   Until it runs, kgsm-monitor serves host metrics normally and reports per-server rxBps/txBps as
   null — "not measured", which is the honest answer, never a fabricated 0.
@@ -23,9 +23,8 @@ MSG
 post_upgrade() {
     cat <<'MSG'
 
-  The meter's programs are already loaded in the kernel; a new object takes effect after:
-
-    systemctl restart kgsm-net-meter.service
+  The meter's programs are already loaded in the kernel; the new object takes effect on the next
+  restart of kgsm-net-meter.service, which the node applies for you.
 
 MSG
 }

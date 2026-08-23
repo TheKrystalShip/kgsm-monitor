@@ -1,0 +1,31 @@
+# The preset policy in kgsm-base decides whether this daemon runs on a node; applying it is symlink
+# manipulation on disk, so it works during the transaction and in a chroot alike. Starting it is the
+# node's post-transaction hook's job, which is where a running system is available.
+#
+# post_install only. An administrator who disabled this unit keeps it disabled across every later
+# version — re-presetting on upgrade would quietly undo that.
+
+post_install() {
+    systemctl preset kgsm-monitor.service >/dev/null 2>&1 || true
+
+    cat <<'MSG'
+
+  kgsm-monitor needs no configuration: /etc/kgsm-monitor/kgsm-monitor.env holds overrides only, and
+  host metrics need nothing from the rest of the ecosystem.
+
+  Per-server metrics are the additive half: they appear once kgsm is installed, since listing the
+  instances is what gives the sampler a watch-list. Per-server network rx/tx needs
+  kgsm-monitor-net-meter as well; without it those two fields read null — not measured, which is
+  the honest answer and never a fabricated 0.
+
+MSG
+}
+
+post_upgrade() {
+    cat <<'MSG'
+
+  If pacman wrote a .pacnew beside /etc/kgsm-monitor/kgsm-monitor.env, merge it — new settings are
+  declared there and a key the file never declares binds to nothing.
+
+MSG
+}

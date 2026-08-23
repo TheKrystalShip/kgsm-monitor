@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — a packaged install enables and starts the monitor and the meter (`2.12.0`)
+
+`packaging/kgsm-monitor.install` and `packaging/kgsm-monitor-net-meter.install` apply kgsm-base's
+`50-kgsm.preset` to their units in `post_install`, so a node comes up with both enabled instead of
+needing a person to enable each one. The node's post-transaction hook starts what is enabled, stopped
+and configured. `post_upgrade` does not preset: an administrator's `disable` survives every later
+version.
+
+The meter is enabled rather than opt-in because it rides the watchdog — its unit is ordered after
+`kgsm-watchdog.service` and wanted by it, so it attaches to `kgsm.slice` once that slice exists and
+re-attaches on every later watchdog start. On a host without the watchdog it never runs and per-server
+`rxBps`/`txBps` stay `null`.
+
+Both packages declare `depends=('kgsm-base')`, which carries the `kgsm` account and the
+`/var/lib/kgsm` tree — so neither ships `/usr/lib/sysusers.d/kgsm-monitor.conf` any more, and
+`deploy/sysusers.d/` is gone.
+
 ### Added — the operator env file is a template, not a blank
 
 `deploy/kgsm-monitor.env.example` documents every `Monitor__*` override with its default and its
