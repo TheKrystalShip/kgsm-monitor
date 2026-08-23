@@ -34,11 +34,13 @@ ENABLE_UNITS=("kgsm-monitor.service")
 
 PREFIX="/opt/${PROJECT}"
 
-# The monitor has no required env file — its unit's Environment= lines carry sane defaults and
-# the optional /etc/kgsm-monitor/kgsm-monitor.env overrides them. Nothing to seed.
+# The monitor needs nothing from its env file — the unit's Environment= lines carry working
+# defaults and this file only overrides them, so it is seeded entirely commented out. setup.sh
+# writes it once and never again; the unit reads it with EnvironmentFile=-, so deleting it is
+# also a supported way to say "no overrides".
 ENV_DIR="/etc/${PROJECT}"
 ENV_FILE="${ENV_DIR}/${PROJECT}.env"
-ENV_EXAMPLE=""
+ENV_EXAMPLE="${REPO_DIR}/deploy/${PROJECT}.env.example"
 
 HEALTH_TRIES="${HEALTH_TRIES:-30}"
 

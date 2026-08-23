@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the operator env file is a template, not a blank
+
+`deploy/kgsm-monitor.env.example` documents every `Monitor__*` override with its default and its
+floor, entirely commented out. `setup.sh` seeds `/etc/kgsm-monitor/kgsm-monitor.env` from it once,
+the package installs the same file 0640 and lists it in `backup=()`, and the unit reads it with
+`EnvironmentFile=-` — so a host with no overrides and a host with no file behave identically.
+
+The file is read after the unit's `Environment=` lines, which the template states, since that is
+what makes an uncommented `Monitor__KgsmPath` or `Monitor__SocketPath` win over the unit.
+
 ### Added — memory measured in the terms that size a server
 
 Every per-server frame carries `memory`: the working set (`memory.stat` `anon` plus

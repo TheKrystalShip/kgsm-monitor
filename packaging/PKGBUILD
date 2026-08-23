@@ -40,6 +40,7 @@ package_kgsm-monitor() {
     pkgdesc="KGSM host and per-server metrics daemon"
     groups=('kgsm-node')
     depends=('systemd')
+    backup=('etc/kgsm-monitor/kgsm-monitor.env')
     optdepends=(
         'kgsm: lists instances, which is what gives per-server metrics a watch-list'
         'kgsm-watchdog: owns kgsm.slice, where native servers live'
@@ -66,6 +67,13 @@ package_kgsm-monitor() {
 
     install -Dm644 "${repo}/deploy/sysusers.d/kgsm-monitor.conf" \
         "${pkgdir}/usr/lib/sysusers.d/kgsm-monitor.conf"
+
+    # Operator overrides. Seeded from the committed example — every knob commented — and listed in
+    # backup=(), so an upgrade writes .pacnew beside an edited file rather than over it. Root-owned
+    # 0640 is correct rather than strict: systemd reads EnvironmentFile= as root before dropping to
+    # User=, so nothing reads this as the service account.
+    install -Dm640 "${repo}/deploy/kgsm-monitor.env.example" \
+        "${pkgdir}/etc/${pkgname}/${pkgname}.env"
 
     # The leaf config descriptor, in the directory kgsm-api scans. Packaged rather than installed by
     # a script, so it can never describe a different build than the one beside it.
