@@ -21,16 +21,15 @@ It reads **every producer's events** but stores none: the journals tell `ServerS
 instance list has changed, and that is the whole of its interest in them. Audit history is read from
 those journals through kgsm-lib (`IEventJournalHistory`), by whoever wants it. Authoritative docs:
 
-- **`PLAN.md`** — full design, decisions, slice-by-slice tracker.
+- **`PLAN.md`** — full design and decisions.
 - **`docs/integration.md`** — the consumer contract (what kgsm-api / any scraper must handle).
-- Wire shape lives in **`src/Monitor.Contracts/Snapshot.cs`** (not the stale
-  `src/Monitor/Model/...` path `docs/integration.md` still cites).
+- Wire shape lives in **`src/Monitor.Contracts/Snapshot.cs`**.
 
 ## Commands
 
 ```bash
 dotnet build                       # JIT build (kgsm-monitor.slnx)
-dotnet test                        # golden-file suite (~60 tests)
+dotnet test                        # golden-file suite
 dotnet test --filter "FullyQualifiedName~CpuSourceTests"   # one class/test
 
 # AOT publish — this IS the lint gate. Expect 0 IL2026 / IL3050 / ILC warnings.
@@ -82,9 +81,9 @@ two properties, `LeafSettingsFile` and `LeafDescriptorFile`. Format and rules:
 
 **Describing the daemon costs it no reflection and no dependency.** The attributes are compiled in as
 source, the generator reads the assembly's metadata in its own process, and the package declares no
-dependencies — so nothing reaches the AOT publish. Verified here: zero ILC warnings, no
-`System.Reflection.MetadataLoadContext.dll` in `artifacts/publish/`, and none of the descriptor's
-strings in the native binary.
+dependencies — so nothing reaches the AOT publish: the ILC pass stays 0-warning, no
+`System.Reflection.MetadataLoadContext.dll` lands in `artifacts/publish/`, and none of the
+descriptor's strings appear in the native binary.
 
 ## Architecture
 
@@ -141,10 +140,11 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
   pin — a published version is immutable, so a change reaches a consumer only under a new number.
   Compatibility is additive-only (consumers ignore unknown fields/`kind`s); see
   `docs/integration.md §7`.
-- **kgsm-lib version is pinned and load-bearing** (`3.0.0` in `Monitor.csproj`). It resolves
-  from the org's GitHub Packages feed in `nuget.config` before publish. The pin
-  matters: `1.5.0` modelled `Instance.ports` as a string, but kgsm now emits a structured array,
-  so an old pin throws on the detailed instance-list JSON and leaves `servers` permanently `[]`.
+- **kgsm-lib version is pinned and load-bearing** (the `TheKrystalShip.KGSM.Lib`
+  `PackageReference` in `Monitor.csproj` is the authority). It resolves from the org's GitHub
+  Packages feed in `nuget.config` before publish. The pin matters: a pin older than the
+  structured-array `Instance.ports` shape throws on the detailed instance-list JSON and leaves
+  `servers` permanently `[]`.
 - **The monitor owns exactly one socket.** `Monitor__SocketPath` (`metrics.sock`, default
   `/run/kgsm-monitor/`) is outbound: consumers scrape it. Events arrive the other way,
   from **files** — every producer's journal, read-only, with no reservation of any kind. The resync
@@ -159,7 +159,7 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
 - **The monitor stores no engine events.** It tails the journal only so `ServerSampler` learns that
   the instance list moved, and it starts at the **tail with no cursor**: a replayed event would
   trigger a resync the periodic floor was going to do anyway. Don't give this consumer a cursor or a
-  store — persisting what it reads is what coupled audit history to a metrics daemon.
+  store — audit history belongs to the journals, read through kgsm-lib by whoever wants it.
 - **`kgsm-monitor.settings.json` is the source of truth for every knob**, not `appsettings.json`
   (the ecosystem names these `kgsm-<leaf>.settings.json`). It is loaded explicitly from
   `AppContext.BaseDirectory` in `Program.cs`, because the slim builder under systemd has no working
@@ -199,6 +199,12 @@ history; never duplicate it into docs or code.
   survive it: *"temporary shim for the rework"*, *"added to satisfy the new requirement"*,
   milestone/phase labels (*"per M2"*, *"the Phase 1 step"*). If a line's justification is the work
   that produced it rather than the system as it now stands, it goes.
+- **No volatile numbers.** Counts and versions that drift — how many projects/files/tests/
+  partials exist, a dependency's pinned version, a file's line count — never go in prose: they are
+  stale the moment anything changes, and nothing fails to remind anyone. Name the authoritative
+  source instead (the csproj, the directory, the barrel file). A number belongs in prose only when
+  it *is* the contract (a port, a timeout, a cap) or a measured fact that is itself the reason a
+  design exists.
 - **Edits are replacements, not appends.** When changing an existing feature, rewrite the affected
   doc/comment fresh as if writing it for the first time — never append a correction under the
   stale version, and never leave the stale version standing beside the new. The current revision

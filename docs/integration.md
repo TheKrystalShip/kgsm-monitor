@@ -94,7 +94,7 @@ if (resp.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable) { /* retry 
 var snapshot = await resp.Content.ReadFromJsonAsync(MyJsonContext.Default.Snapshot, ct);
 ```
 
-**DTOs:** you can copy `src/Monitor/Model/Snapshot.cs`'s record graph verbatim (it's pure
+**DTOs:** you can copy `src/Monitor.Contracts/Snapshot.cs`'s record graph verbatim (it's pure
 records, camelCase on the wire) or generate your own from the schema in §3. Keeping your
 own copy decouples you from the monitor's internal refactors — recommended. Either way,
 **ignore unknown fields** (STJ does by default) so an additive monitor change can't break
@@ -444,7 +444,7 @@ There is **no version field** in the payload today. The compatibility model is t
   else is non-null. Don't assume io is present.
 - **If you need a breaking signal** (a real schema version, a `kgsmEnabled`/mode flag, a
   per-server cgroup-vs-proc accuracy tag), the right move is to **add it to
-  `Model/Snapshot.cs` + `MonitorJsonContext`** as an additive field rather than working
+  `src/Monitor.Contracts/Snapshot.cs` + `MonitorJsonContext`** as an additive field rather than working
   around its absence. Both are tiny, AOT-safe changes.
 
 ---
@@ -525,6 +525,6 @@ That's the whole integration surface. Everything else — auth, fan-out, history
 
 ---
 
-*Authoritative source for shapes: `src/Monitor/Model/Snapshot.cs`. For config:
+*Authoritative source for shapes: `src/Monitor.Contracts/Snapshot.cs`. For config:
 `src/Monitor/MonitorOptions.cs`. For endpoints: `src/Monitor/Program.cs`. For the design
 rationale behind these choices: [PLAN.md](../PLAN.md).*
