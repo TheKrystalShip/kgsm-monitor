@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — temperatures and fans that say what they measure (`2.15.0`, Contracts `1.10.0`)
+
+hwmon names a channel after the register that produced it — `Tctl`, `AUXTIN1`, `Composite` — which
+identifies the silicon, not the thing being measured. `SensorReading` now carries the semantics
+beside the number: a `role` (`cpu` / `gpu` / `memory` / `drive` / `board` / `chipset` / `network`)
+a surface can group and icon by, and a human `name` ("CPU", "CPU die 1", "Memory module 1"). A name
+states the thing measured and not the quantity — the record already carries °C, so repeating it reads
+as noise wherever the unit is on screen; a caller wanting a sentence composes one. `HwmonCatalog` holds that knowledge, in the daemon that reads the register — every
+C# surface reads temperatures through here, so a chip table kept anywhere downstream would have to
+be copied into the next consumer. A chip the catalog has no entry for keeps its reading and comes
+through with both fields null, so unrecognised hardware loses nothing and only gains no nicer name.
+
+`SensorReading.id` is a stable per-channel identity, `chip/device/tempN`, built on the basename the
+chip's `device` symlink resolves to. It is unique where `chip` is not — two DDR4 DIMMs both named
+`jc42` separate as `0-0018` and `0-0019` — and it survives a reboot, which the hwmon index does not:
+the same chip lands on a different `hwmonN` with the order its bus binds. Chips are ranked by name
+then device key before anything is named, which is what keeps "Memory module 1" the same DIMM
+tomorrow. `HostTempC` targets a sensor by that id, so namesake chips are now separate targets and
+either can open a condition the other is not in.
+
+`Snapshot.fans` (`FanReading` — `id`, `chip`, `label`, `rpm`, `name`) reports the tachometers that
+are turning. Separate from `sensors` because that record's `valueC` is a °C contract the `HostTempC`
+threshold fans out over, and an RPM carried in the same array would be reconciled against a
+temperature line. A tachometer reading zero is omitted: an unpopulated header and a stopped fan both
+read zero, hwmon offers nothing to separate them, and boards publish far more headers than anyone
+populates. Which header drives which physical fan is board wiring hwmon does not carry, so a fan
+takes its `fanN_label` when the driver publishes one and its number otherwise.
+
+### Fixed — unconnected super-I/O pins no longer read as measurements (`2.15.0`)
+
+Super-I/O chips (Nuvoton/ITE/Fintek/Winbond) publish every thermistor input and fan header the chip
+has pins for, wired or not. An unwired input cannot report itself absent, so it reads a rail extreme
+instead — the driver's −128 °C open-circuit sentinel, or a peg up around 113 °C — and those are
+indistinguishable from readings. They put an impossible host temperature on the panel and open a
+danger-band `host-temp` episode that can never clear, because the value never moves.
+
+`HwmonCatalog.IsReal` withholds them, and judges only super-I/O: every other hwmon class exposes the
+sensors it physically has. The discriminator is physics — a board-mounted thermistor measures
+ambient, socket and VRM points, all of which sit between 0 and 100 °C. Silicon is never range-judged,
+neither the dedicated chips (k10temp, coretemp, nvme, GPU) nor the super-I/O channels that merely
+relay silicon (`TSI*`, `SMBUSMASTER*`, `PECI*`, which carry the CPU's own control temperature over
+SB-TSI and legitimately pass 100 °C). `PCH_*` are Intel platform-controller registers the driver
+publishes on every platform; off an Intel PCH they read a hard zero, and only a hard zero is
+withheld. `HwmonSample.WithheldChannels` counts what was held back, so the gap between what `sensors`
+prints and what the panel shows is an auditable number rather than an unexplained absence.
+
 ### Added — the kgsm.slice aggregate: what the game servers collectively cost (`2.14.0`, Contracts `1.9.0`)
 
 `Snapshot.slice` (`SliceMetrics` — `cpuPctCore`, `memBytes`, `pids`) measures the KGSM parent cgroup

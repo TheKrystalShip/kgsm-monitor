@@ -140,6 +140,9 @@ public sealed class MetricsSampler(
         // Sampled before the leaves, because attributing a leaf's GPU is a join against these contexts.
         GpuMetrics? gpu = _gpu.Sample();
 
+        // One hwmon walk yields both arrays, so the temperatures and the fans always describe the same tick.
+        HwmonSample hwmon = _sensors.Sample();
+
         var frame = new Snapshot(
             Ts: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             IntervalMs: _intervalMs,
@@ -149,13 +152,14 @@ public sealed class MetricsSampler(
             Mem: mem,
             Disk: disk,
             Net: net,
-            Sensors: _sensors.Sample(),
+            Sensors: hwmon.Temps,
             Servers: _servers?.Sample() ?? [],
             Leaves: _leaves?.Sample(gpu) ?? [],
             Conditions: [],
             // Run-state-independent, so it is NOT derived from Servers above: an instance sitting
             // stopped has no metrics row and still occupies its disk.
             ServerDisks: _servers?.SampleDiskUsage() ?? [],
+            Fans: hwmon.Fans,
             Gpu: gpu,
             Slice: _slice.Sample());
 

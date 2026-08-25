@@ -300,7 +300,7 @@ public class PolicyStoreTests : IDisposable
             Mem: new Contracts.MemoryMetrics(1000, 500, 500, 10, 0, 0, 0, 0),
             Disk: new Contracts.DiskMetrics([], new Contracts.DiskIo(0, 0)),
             Net: new Contracts.NetworkMetrics([]),
-            Sensors: [new Contracts.SensorReading("k10temp", "Tctl", tempC)],
+            Sensors: [new Contracts.SensorReading("k10temp/dev/temp1", "k10temp", "Tctl", tempC)],
             Servers: [], Leaves: [], Conditions: []);
 
     // The rule keys open in one evaluate, for readable set assertions.

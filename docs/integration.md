@@ -149,6 +149,19 @@ missing key). Below is a fully-annotated example with every field; types and uni
     ]
   },
 
+  "sensors": [                // hwmon temperatures; unconnected super-I/O pins withheld (§3.7)
+    { "id": "k10temp/0000:00:18.3/temp1", "chip": "k10temp", "label": "Tctl",
+      "valueC": 58.9, "role": "cpu", "name": "CPU temperature" },
+    { "id": "jc42/0-0018/temp1", "chip": "jc42", "label": null,
+      "valueC": 44.0, "role": "memory", "name": "Memory module 1 temperature" },
+    { "id": "newchip/0000:00:07.1/temp1", "chip": "newchip", "label": null,
+      "valueC": 51.0, "role": null, "name": null }   // unrecognised chip: measured, just unnamed
+  ],
+
+  "fans": [                   // tachometers that are TURNING; a zero reading is omitted (§3.7)
+    { "id": "nct6792/nct6775.2592/fan1", "chip": "nct6792", "label": null, "rpm": 2406, "name": "Fan 1" }
+  ],
+
   "servers": [                // per-KGSM-server; EMPTY when host-only mode OR no servers running (§6)
     {
       "id": "factorio",       // KGSM instance name — STABLE key across restarts; use this to correlate
@@ -196,6 +209,17 @@ missing key). Below is a fully-annotated example with every field; types and uni
 | `servers[].diskBytes` | `long?` | **bytes** or **null** | On-disk footprint of the instance's working dir (§3.5). `null` = not yet walked / unreadable, **never** 0-for-unknown. |
 | `servers[].rxBps` | `long?` | bytes/sec or **null** | Per-server network **receive**, eBPF cgroup/skb meter (§3.6). `null` = un-metered / cgroup outside `kgsm.slice` / no traffic yet, **never** 0-for-unknown. |
 | `servers[].txBps` | `long?` | bytes/sec or **null** | Per-server network **transmit** (see `rxBps`). |
+| `sensors[].id` | `string` | — | **Stable per-channel key**, `chip/device/tempN`. Unique where `chip` is not, and survives a reboot (§3.7). |
+| `sensors[].chip` | `string` | — | The raw hwmon `name` (`k10temp`, `nvme`). **Not unique** — chips share names. |
+| `sensors[].label` | `string?` | — | The raw `tempN_label` (`Tctl`, `Composite`); `null` when the chip publishes none. |
+| `sensors[].valueC` | `double` | **°C** | |
+| `sensors[].role` | `string?` | `cpu`\|`gpu`\|`memory`\|`drive`\|`board`\|`chipset`\|`network` | What the channel measures. `null` = chip not in the catalog; the reading is still real (§3.7). |
+| `sensors[].name` | `string?` | — | Human name ("CPU temperature"). `null` exactly when `role` is — fall back to `chip`/`label`. |
+| `fans[].id` | `string` | — | Stable per-channel key, `chip/device/fanN`. |
+| `fans[].chip` | `string` | — | The hwmon `name` exposing the tachometer. |
+| `fans[].label` | `string?` | — | The raw `fanN_label`; `null` when the driver publishes none. |
+| `fans[].rpm` | `int` | **RPM** | Always > 0 — a zero tachometer is omitted (§3.7). |
+| `fans[].name` | `string?` | — | The driver's label when it has one, else `Fan N`. |
 
 > **⚠ Unit trap — host CPU vs server CPU are different scales.** `cpu.totalPct` is
 > **0–100 across all cores** (the whole host). `servers[].cpuPctCore` is **percent of one
@@ -300,6 +324,40 @@ carry numbers; other kinds read `null` until their measurement path lands (conta
 > on boot and on watchdog restart. Until then every server simply reads `null` here.
 
 ---
+
+### 3.7 `sensors` / `fans` — what hwmon gives you, and what it withholds
+
+hwmon names a channel after the register that produced it, which identifies the silicon and not the
+thing being measured. Each reading therefore carries both: the raw `chip`/`label` pair, and a `role`
+plus a human `name` when the daemon recognises the chip.
+
+**Handle `role: null`.** It means the catalog has no entry for that chip, not that the reading is
+suspect — the value is measured and real. Fall back to rendering `chip`/`label`, the same pair a
+consumer had before roles existed. New hardware appears this way rather than disappearing.
+
+**`id` is the key to correlate on, not `chip`.** Two chips can share a name: a board with two DDR4
+DIMMs reports two chips both called `jc42`, and matching on the name alone collapses them into one.
+`id` separates them on the device behind them (`jc42/0-0018/temp1` vs `jc42/0-0019/temp1`) and is
+stable across a reboot, which the `hwmonN` index is not — the same chip lands on a different number
+depending on the order its bus binds. Threshold conditions target a sensor by this id, so
+`conditions[].ref` for a `HostTempC` rule is a `sensors[].id`.
+
+**Not every channel the kernel exposes is on the wire.** Super-I/O chips (Nuvoton/ITE/Fintek/
+Winbond, the LPC sensor chip on a desktop board) publish every thermistor input and fan header the
+chip has pins for, whether or not the board wired one. An unwired input cannot report itself absent,
+so it reads a rail extreme — a −128 °C open-circuit sentinel, or a peg around 113 °C — which is
+indistinguishable from a measurement and will otherwise put an impossible temperature on a dashboard
+and open a threshold episode that never clears. Those are withheld. Only super-I/O is judged this
+way; a PCI or i2c chip exposes the sensors it physically has and passes through untouched, as does
+any super-I/O channel that relays silicon rather than reading a thermistor (`TSI*`, `SMBUSMASTER*`,
+`PECI*` carry the CPU's own control temperature and legitimately exceed 100 °C).
+
+**A fan reading zero is omitted, not reported as stopped.** An unpopulated header and a fan that has
+stopped both read zero and hwmon cannot separate them, so `fans[]` carries only tachometers that are
+turning. Expect fewer rows than the board has headers. Which header drives which physical fan is
+board wiring hwmon does not carry either: a fan takes its `fanN_label` when the driver publishes one
+and its number otherwise, and a consumer should not infer "CPU fan" from `fan1`.
+
 
 ## 4. Endpoints
 

@@ -252,7 +252,7 @@ public class ConditionEvaluatorTests
     }
 
     [Fact]
-    public void Sensors_are_referenced_by_chip_and_label()
+    public void Sensors_are_referenced_by_their_stable_id()
     {
         var evaluator = new ConditionEvaluator();
         var policy = Policy(new ThresholdRule("host-temp", ThresholdMetric.HostTempC,
@@ -260,14 +260,34 @@ public class ConditionEvaluatorTests
 
         Snapshot frame = FrameWith(T0, sensors:
         [
-            new SensorReading("k10temp", "Tctl", 90),
-            new SensorReading("nvme", null, 91),
+            new SensorReading("k10temp/0000:00:18.3/temp1", "k10temp", "Tctl", 90),
+            new SensorReading("nvme/nvme0/temp1", "nvme", null, 91),
         ]);
 
         ConditionReading[] conditions = evaluator.Evaluate(policy, frame);
         Assert.Equal(2, conditions.Length);
-        Assert.Contains(conditions, c => c.Ref == "k10temp/Tctl");
-        Assert.Contains(conditions, c => c.Ref == "nvme");   // no label — the chip alone
+        Assert.Contains(conditions, c => c.Ref == "k10temp/0000:00:18.3/temp1");
+        Assert.Contains(conditions, c => c.Ref == "nvme/nvme0/temp1");
+    }
+
+    [Fact]
+    public void Two_chips_sharing_a_name_are_two_targets()
+    {
+        // Unlabelled namesakes — two DDR4 DIMMs — separate on the device behind them, so one can breach
+        // while the other is fine instead of the pair collapsing into a single target.
+        var evaluator = new ConditionEvaluator();
+        var policy = Policy(new ThresholdRule("host-temp", ThresholdMetric.HostTempC,
+            Warn: 85, Danger: null, FireForSec: 0, ClearForSec: 0, ClearMargin: 5, Enabled: true));
+
+        Snapshot frame = FrameWith(T0, sensors:
+        [
+            new SensorReading("jc42/0-0018/temp1", "jc42", null, 90),
+            new SensorReading("jc42/0-0019/temp1", "jc42", null, 41),
+        ]);
+
+        ConditionReading[] conditions = evaluator.Evaluate(policy, frame);
+        ConditionReading only = Assert.Single(conditions);
+        Assert.Equal("jc42/0-0018/temp1", only.Ref);
     }
 
     // --- per-server ---------------------------------------------------------------------------------

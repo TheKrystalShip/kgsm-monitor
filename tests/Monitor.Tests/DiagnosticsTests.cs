@@ -75,7 +75,7 @@ public class SensorSourceTests
     [Fact]
     public void Read_extracts_temperatures_with_milli_to_celsius_conversion()
     {
-        var sensors = SensorSource.Read(HwmonRoot);
+        var sensors = SensorSource.Read(HwmonRoot).Temps;
 
         // nvme temp1_input = 30900 milli-°C -> 30.9 °C, label "Composite".
         var composite = sensors.Single(s => s.Chip == "nvme" && s.Label == "Composite");
@@ -91,7 +91,7 @@ public class SensorSourceTests
     {
         // k10temp has temp1 + temp3 but NO temp2 (real AMD layout) — globbing temp*_input
         // must pick up both and not assume a contiguous range.
-        var k10 = SensorSource.Read(HwmonRoot).Where(s => s.Chip == "k10temp").ToArray();
+        var k10 = SensorSource.Read(HwmonRoot).Temps.Where(s => s.Chip == "k10temp").ToArray();
 
         Assert.Equal(2, k10.Length);
         Assert.Contains(k10, s => s.Label == "Tctl");
@@ -102,7 +102,7 @@ public class SensorSourceTests
     public void Read_leaves_label_null_when_chip_has_no_label_file()
     {
         // jc42 chips expose temp1_input with no temp1_label.
-        var jc42 = SensorSource.Read(HwmonRoot).Where(s => s.Chip == "jc42").ToArray();
+        var jc42 = SensorSource.Read(HwmonRoot).Temps.Where(s => s.Chip == "jc42").ToArray();
 
         Assert.NotEmpty(jc42);
         Assert.All(jc42, s => Assert.Null(s.Label));
@@ -112,7 +112,7 @@ public class SensorSourceTests
     public void Read_keeps_chips_that_share_a_name_without_deduping()
     {
         // Two distinct jc42 DIMM sensors share the chip name — both must appear.
-        var jc42 = SensorSource.Read(HwmonRoot).Where(s => s.Chip == "jc42").ToArray();
+        var jc42 = SensorSource.Read(HwmonRoot).Temps.Where(s => s.Chip == "jc42").ToArray();
         Assert.Equal(2, jc42.Length);
     }
 
@@ -120,8 +120,8 @@ public class SensorSourceTests
     public void Read_returns_empty_array_when_no_hwmon_present()
     {
         // The honesty guard: absent tree -> [] (never an invented row).
-        Assert.Empty(SensorSource.Read(Fixtures.Path("sys/hwmon-empty")));
-        Assert.Empty(SensorSource.Read(Fixtures.Path("sys/does-not-exist")));
+        Assert.Empty(SensorSource.Read(Fixtures.Path("sys/hwmon-empty")).Temps);
+        Assert.Empty(SensorSource.Read(Fixtures.Path("sys/does-not-exist")).Temps);
     }
 }
 

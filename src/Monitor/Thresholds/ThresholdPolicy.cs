@@ -292,9 +292,8 @@ public static class ThresholdMetrics
         }
     }
 
-    /// <summary>How a sensor names itself as a target: <c>chip/label</c>, or just the chip when it carries
-    /// no label. Two chips can share a name, which this does not resolve — a host with two identically
-    /// named unlabelled chips reports them as one target, which is the honest limit of what hwmon gives.</summary>
-    public static string SensorRef(SensorReading sensor) =>
-        string.IsNullOrEmpty(sensor.Label) ? sensor.Chip : $"{sensor.Chip}/{sensor.Label}";
+    /// <summary>How a sensor names itself as a target — its <see cref="SensorReading.Id"/>, which is unique
+    /// per channel and stable across a reboot. Chips that share a name still separate, so two DDR4 DIMMs
+    /// both called <c>jc42</c> are two targets and either can open a condition the other is not in.</summary>
+    public static string SensorRef(SensorReading sensor) => sensor.Id;
 }

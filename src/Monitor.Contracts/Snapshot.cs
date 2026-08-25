@@ -20,6 +20,7 @@ public sealed record Snapshot(
     LeafMetrics[] Leaves,     // per-KGSM-leaf cgroup metrics (empty when off/none running)
     ConditionReading[] Conditions,   // threshold conditions currently breaching (empty when none/off)
     ServerDiskUsage[]? ServerDisks = null,   // on-disk footprint per WATCHED instance, running or not
+    FanReading[]? Fans = null,       // hwmon fan tachometers reading above zero (empty when none spin)
     GpuMetrics? Gpu = null,          // GPU devices + compute contexts (null when the host has none)
     SliceMetrics? Slice = null);     // the KGSM parent cgroup's aggregate (null when kgsm.slice is absent)
 
@@ -167,14 +168,60 @@ public sealed record NetworkMetrics(InterfaceRate[] Ifaces);
 public sealed record InterfaceRate(string Name, long RxBps, long TxBps, long RxPps, long TxPps, string? Mac, long? Errors);
 
 /// <summary>
-/// One hwmon temperature reading: a chip's <c>tempN_input</c>, in °C. Sourced from
-/// <c>/sys/class/hwmon/hwmon*/</c>. The array is empty (never invented) when no hwmon
-/// chip exposes a temperature.
+/// One hwmon temperature reading: a chip's <c>tempN_input</c> in °C, carrying whatever semantic
+/// identity the daemon could establish for it. Sourced from <c>/sys/class/hwmon/hwmon*/</c>. The
+/// array is empty (never invented) when no hwmon chip exposes a temperature.
 /// </summary>
+/// <param name="Id">
+/// Stable identity for the channel: <c>chip/device/tempN</c>, where <c>device</c> is the basename the
+/// chip's <c>device</c> symlink resolves to (a PCI address, an i2c address, a platform device). Unique
+/// where <see cref="Chip"/> is not — two DDR4 DIMMs both named <c>jc42</c> separate as <c>0-0018</c>
+/// and <c>0-0019</c> — and stable across a reboot, which the hwmon index is not: the same chip lands on
+/// a different <c>hwmonN</c> depending on the order its bus binds.
+/// </param>
 /// <param name="Chip">The hwmon <c>name</c> (e.g. "k10temp", "nvme"). Not unique — two chips can share a name.</param>
 /// <param name="Label">The <c>tempN_label</c> if present (e.g. "Tctl", "Composite"); <c>null</c> when the chip has no label file.</param>
 /// <param name="ValueC">Temperature in °C (the raw <c>tempN_input</c> milli-°C divided by 1000).</param>
-public sealed record SensorReading(string Chip, string? Label, double ValueC);
+/// <param name="Role">
+/// What the channel measures, as a coarse class a surface can group, sort and icon by: <c>cpu</c>,
+/// <c>gpu</c>, <c>memory</c>, <c>drive</c>, <c>board</c>, <c>network</c>. <c>null</c> when the daemon
+/// holds no entry for the chip — the reading is real and still reported, merely unclassified.
+/// </param>
+/// <param name="Name">
+/// A human name for the channel ("CPU temperature", "Memory module 1"). <c>null</c> exactly when
+/// <see cref="Role"/> is null, which is a surface's signal to fall back to chip/label.
+/// </param>
+public sealed record SensorReading(
+    string Id,
+    string Chip,
+    string? Label,
+    double ValueC,
+    string? Role = null,
+    string? Name = null);
+
+/// <summary>
+/// One hwmon fan tachometer, in RPM, from a chip's <c>fanN_input</c>.
+/// </summary>
+/// <remarks>
+/// <para><b>Separate from <see cref="SensorReading"/> on purpose.</b> That record's <see cref="SensorReading.ValueC"/>
+/// is a °C contract which the <c>HostTempC</c> threshold fans out over; an RPM carried in the same array
+/// would be reconciled against a temperature line.</para>
+/// <para><b>A tachometer reading zero is omitted.</b> A header with no fan plugged into it and a fan that has
+/// stopped both read 0, and hwmon offers nothing to tell them apart. Boards publish far more headers than
+/// anyone populates, so reporting every zero would state that fans exist which physically do not — the more
+/// certain error of the two.</para>
+/// </remarks>
+/// <param name="Id">Stable identity, <c>chip/device/fanN</c> — built like <see cref="SensorReading.Id"/>.</param>
+/// <param name="Chip">The hwmon <c>name</c> exposing the tachometer (e.g. "nct6792").</param>
+/// <param name="Label">The <c>fanN_label</c> when the chip publishes one; <c>null</c> otherwise.</param>
+/// <param name="Rpm">Revolutions per minute, straight from <c>fanN_input</c>.</param>
+/// <param name="Name">A human name ("CPU fan"); <c>null</c> when the daemon holds no entry for the chip.</param>
+public sealed record FanReading(
+    string Id,
+    string Chip,
+    string? Label,
+    int Rpm,
+    string? Name = null);
 
 /// <summary>
 /// Per-game-server resource usage. For <c>systemd</c>/<c>container</c> servers this comes
