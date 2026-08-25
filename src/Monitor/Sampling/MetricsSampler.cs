@@ -30,6 +30,7 @@ public sealed class MetricsSampler(
     private readonly DiskSource _disk = new(options.MountFsDeny);
     private readonly SensorSource _sensors = new();
     private readonly GpuSource _gpu = new();
+    private readonly SliceSource _slice = new();
 
     // Static CPU identity — read once (it doesn't change) and reused on every frame.
     private readonly CpuInfo _cpuInfo = CpuInfoSource.Read();
@@ -155,7 +156,8 @@ public sealed class MetricsSampler(
             // Run-state-independent, so it is NOT derived from Servers above: an instance sitting
             // stopped has no metrics row and still occupies its disk.
             ServerDisks: _servers?.SampleDiskUsage() ?? [],
-            Gpu: gpu);
+            Gpu: gpu,
+            Slice: _slice.Sample());
 
         // The rules are evaluated against the frame that is about to be published, and the verdict is folded
         // back into it — so a condition and the reading that produced it are never a tick apart, and a

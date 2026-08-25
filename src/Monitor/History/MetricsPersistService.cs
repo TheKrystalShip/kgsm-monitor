@@ -175,5 +175,16 @@ public sealed class MetricsPersistService : BackgroundService
             rows.Add(new HistoryRow("host", hostId, "diskReadBps", ts, io.ReadBps));
             rows.Add(new HistoryRow("host", hostId, "diskWriteBps", ts, io.WriteBps));
         }
+
+        // The slice aggregate — what the game servers collectively cost — persisted beside the host
+        // series so "servers vs host" can be read over time, not only live. Each field only when
+        // measured: an absent slice (no watchdog, nothing native) writes no row, never a zero.
+        if (s.Slice is { } slice)
+        {
+            if (slice.CpuPctCore is { } sliceCpu)
+                rows.Add(new HistoryRow("host", hostId, "sliceCpuPctCore", ts, sliceCpu));
+            if (slice.MemBytes is { } sliceMem)
+                rows.Add(new HistoryRow("host", hostId, "sliceMemBytes", ts, sliceMem));
+        }
     }
 }

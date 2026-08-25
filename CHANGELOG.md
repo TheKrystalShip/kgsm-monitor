@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the kgsm.slice aggregate: what the game servers collectively cost (`2.14.0`, Contracts `1.9.0`)
+
+`Snapshot.slice` (`SliceMetrics` — `cpuPctCore`, `memBytes`, `pids`) measures the KGSM parent cgroup
+itself, the way each instance's cgroup is already measured. The slice's counters are recursive over
+every descendant, so the figure also covers what per-server rows can miss (an instance mid-teardown,
+a cgroup awaiting re-resolve) — which is what makes "game servers vs the rest of the host" an honest
+split rather than a sum of rows. Null when `kgsm.slice` doesn't exist (no watchdog, nothing native
+ever started); `cpuPctCore` null on the first observation; an unreadable counter file is a null
+field, never a zero. `SliceSource` holds the rate anchor and drops it when the slice disappears, so
+a watchdog restart cannot produce a rate against the dead slice's counter.
+
+The history store persists `sliceCpuPctCore` / `sliceMemBytes` beside the host series (each only
+when measured), so the split is readable over time as well as live.
+
 ### Fixed — the packaged meter carries the compiled eBPF object (`2.13.0`)
 
 `packaging/PKGBUILD`'s `build()` compiles `net_meter.bpf.o` when the publish stage does not already

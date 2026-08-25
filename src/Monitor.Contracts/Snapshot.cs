@@ -20,7 +20,24 @@ public sealed record Snapshot(
     LeafMetrics[] Leaves,     // per-KGSM-leaf cgroup metrics (empty when off/none running)
     ConditionReading[] Conditions,   // threshold conditions currently breaching (empty when none/off)
     ServerDiskUsage[]? ServerDisks = null,   // on-disk footprint per WATCHED instance, running or not
-    GpuMetrics? Gpu = null);         // GPU devices + compute contexts (null when the host has none)
+    GpuMetrics? Gpu = null,          // GPU devices + compute contexts (null when the host has none)
+    SliceMetrics? Slice = null);     // the KGSM parent cgroup's aggregate (null when kgsm.slice is absent)
+
+/// <summary>
+/// The aggregate of everything under the KGSM parent cgroup (<c>kgsm.slice</c>) — the game servers'
+/// collective share of the host, measured at the slice itself rather than summed from per-server rows.
+/// The slice's own counters are recursive over every descendant, so this also covers work a per-server
+/// row can miss (an instance mid-teardown, a cgroup the resolver hasn't re-found yet), which is what
+/// makes "game servers vs the rest of the host" an honest split.
+/// </summary>
+/// <remarks>
+/// Null when <c>kgsm.slice</c> does not exist — a host with no watchdog, or one where nothing native has
+/// ever started. That is an ordinary state, not a fault. <see cref="CpuPctCore"/> follows the per-server
+/// convention (percent of <em>one</em> core, may exceed 100) and is null on the first observation, when
+/// there is no delta to rate against; each other field is null when its counter file could not be read —
+/// never a substituted zero.
+/// </remarks>
+public sealed record SliceMetrics(double? CpuPctCore, long? MemBytes, int? Pids);
 
 /// <summary>
 /// The GPU devices on this host and every compute context running on them. Pure measurement — which
