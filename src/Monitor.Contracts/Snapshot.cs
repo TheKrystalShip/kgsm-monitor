@@ -65,6 +65,10 @@ public sealed record GpuMetrics(GpuDevice[] Devices, GpuProcess[] Processes);
 /// <param name="TempC">Core temperature in °C, or null when unreadable.</param>
 /// <param name="PowerW">Current draw in watts, or null when unreadable.</param>
 /// <param name="PowerCapW">Enforced power limit in watts, or null when unreadable.</param>
+/// <param name="TempLimitC">The temperature the driver reports the device is rated to run to (NVML's
+/// maximum operating temperature), °C. Null when the driver does not publish one.</param>
+/// <param name="TempShutdownC">The temperature at which the driver shuts the device down (NVML's
+/// shutdown threshold), °C. Null when unpublished; never below <paramref name="TempLimitC"/>.</param>
 public sealed record GpuDevice(
     int Index,
     string Name,
@@ -74,7 +78,9 @@ public sealed record GpuDevice(
     double? SmPct,
     double? TempC,
     double? PowerW,
-    double? PowerCapW);
+    double? PowerCapW,
+    double? TempLimitC = null,
+    double? TempShutdownC = null);
 
 /// <summary>
 /// One compute context on a device, resolved to the systemd unit that owns it.
@@ -191,13 +197,41 @@ public sealed record InterfaceRate(string Name, long RxBps, long TxBps, long RxP
 /// A human name for the channel ("CPU temperature", "Memory module 1"). <c>null</c> exactly when
 /// <see cref="Role"/> is null, which is a surface's signal to fall back to chip/label.
 /// </param>
+/// <param name="LimitHighC">
+/// The temperature the device itself calls hot (hwmon <c>tempN_max</c>, an NVMe warning threshold),
+/// in °C. <c>null</c> when the device publishes none, or published one that cannot be a limit — the
+/// hwmon ABI has no validity flag, so a driver whose underlying register is unimplemented emits a
+/// sentinel that is indistinguishable from a setting. A consumer reads null as "this device has no
+/// opinion" and falls back to whatever policy it applies.
+/// </param>
+/// <param name="LimitCriticalC">
+/// The temperature at which the device throttles or shuts down (hwmon <c>tempN_crit</c>, else
+/// <c>tempN_emergency</c>), in °C. Null on the same terms as <see cref="LimitHighC"/>, and never
+/// below it — a pair that arrives inverted is inconsistent, and the critical half is dropped.
+/// </param>
+/// <param name="Primary">
+/// Whether this is the channel to show for its device when only one can be. A package temperature is
+/// primary and its per-die channels are not; an NVMe composite is primary and its component sensors
+/// are not; each DIMM is its own device and so each is primary. False never means unimportant — it
+/// means another channel on the same device is the headline.
+/// </param>
+/// <param name="DuplicateOf">
+/// The <see cref="Id"/> of the channel this one restates, when that is structurally known rather than
+/// inferred from the values agreeing. A motherboard's <c>TSI</c>/<c>PECI</c>/<c>SMBUSMASTER</c> channel
+/// relays the CPU's own control temperature, which the CPU's driver already publishes directly, so the
+/// two are one measurement arriving by two paths. Null when nothing restates this channel.
+/// </param>
 public sealed record SensorReading(
     string Id,
     string Chip,
     string? Label,
     double ValueC,
     string? Role = null,
-    string? Name = null);
+    string? Name = null,
+    double? LimitHighC = null,
+    double? LimitCriticalC = null,
+    bool Primary = true,
+    string? DuplicateOf = null);
 
 /// <summary>
 /// One hwmon fan tachometer, in RPM, from a chip's <c>fanN_input</c>.

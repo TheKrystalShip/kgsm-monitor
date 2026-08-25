@@ -271,6 +271,85 @@ public class ConditionEvaluatorTests
     }
 
     [Fact]
+    public void A_sensor_is_judged_against_its_own_published_limits()
+    {
+        // The drive warns at 80.85 and the rule's line is 85. At 82 the drive is over ITS line and the
+        // CPU, at the same temperature, is not — which is the whole point of per-device limits.
+        var evaluator = new ConditionEvaluator();
+        var policy = Policy(new ThresholdRule("host-temp", ThresholdMetric.HostTempC,
+            Warn: 85, Danger: 95, FireForSec: 0, ClearForSec: 0, ClearMargin: 5, Enabled: true));
+
+        Snapshot frame = FrameWith(T0, sensors:
+        [
+            new SensorReading("nvme/nvme0/temp1", "nvme", "Composite", 82.0, "drive", "SSD",
+                LimitHighC: 80.85, LimitCriticalC: 84.85),
+            new SensorReading("k10temp/0000:00:18.3/temp1", "k10temp", "Tctl", 82.0, "cpu", "CPU"),
+        ]);
+
+        ConditionReading[] conditions = evaluator.Evaluate(policy, frame);
+
+        ConditionReading only = Assert.Single(conditions);
+        Assert.Equal("nvme/nvme0/temp1", only.Ref);
+        Assert.Equal(ConditionBand.Warn, only.Band);
+        // The number reported is the one compared against, or the episode cannot be explained against
+        // the reading printed beside it.
+        Assert.Equal(80.85, only.Threshold);
+    }
+
+    [Fact]
+    public void A_published_critical_drives_the_danger_band()
+    {
+        var evaluator = new ConditionEvaluator();
+        var policy = Policy(new ThresholdRule("host-temp", ThresholdMetric.HostTempC,
+            Warn: 85, Danger: 95, FireForSec: 0, ClearForSec: 0, ClearMargin: 5, Enabled: true));
+
+        Snapshot frame = FrameWith(T0, sensors:
+        [
+            new SensorReading("nvme/nvme0/temp1", "nvme", "Composite", 86.0, "drive", "SSD",
+                LimitHighC: 80.85, LimitCriticalC: 84.85),
+        ]);
+
+        ConditionReading only = Assert.Single(evaluator.Evaluate(policy, frame));
+        Assert.Equal(ConditionBand.Danger, only.Band);
+        Assert.Equal(84.85, only.Threshold);
+    }
+
+    [Fact]
+    public void A_rule_with_no_danger_band_does_not_gain_one_from_a_device()
+    {
+        // Enabling per-device limits must not silently add a severity nobody configured: the rule decides
+        // WHETHER a danger band exists, the device only decides where it sits.
+        var evaluator = new ConditionEvaluator();
+        var policy = Policy(new ThresholdRule("host-temp", ThresholdMetric.HostTempC,
+            Warn: 85, Danger: null, FireForSec: 0, ClearForSec: 0, ClearMargin: 5, Enabled: true));
+
+        Snapshot frame = FrameWith(T0, sensors:
+        [
+            new SensorReading("nvme/nvme0/temp1", "nvme", "Composite", 90.0, "drive", "SSD",
+                LimitHighC: 80.85, LimitCriticalC: 84.85),
+        ]);
+
+        ConditionReading only = Assert.Single(evaluator.Evaluate(policy, frame));
+        Assert.Equal(ConditionBand.Warn, only.Band);
+    }
+
+    [Fact]
+    public void A_sensor_with_no_published_limits_keeps_the_rules_line()
+    {
+        var evaluator = new ConditionEvaluator();
+        var policy = Policy(new ThresholdRule("host-temp", ThresholdMetric.HostTempC,
+            Warn: 85, Danger: 95, FireForSec: 0, ClearForSec: 0, ClearMargin: 5, Enabled: true));
+
+        Snapshot frame = FrameWith(T0, sensors:
+        [
+            new SensorReading("k10temp/0000:00:18.3/temp1", "k10temp", "Tctl", 90.0, "cpu", "CPU"),
+        ]);
+
+        ConditionReading only = Assert.Single(evaluator.Evaluate(policy, frame));
+        Assert.Equal(85, only.Threshold);
+    }
+
+    [Fact]
     public void Two_chips_sharing_a_name_are_two_targets()
     {
         // Unlabelled namesakes — two DDR4 DIMMs — separate on the device behind them, so one can breach

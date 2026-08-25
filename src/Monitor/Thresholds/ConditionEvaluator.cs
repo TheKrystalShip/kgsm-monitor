@@ -105,7 +105,7 @@ public sealed class ConditionEvaluator
         }
 
         st.LastValue = obs.Value;
-        string? band = Classify(rule, obs.Value);
+        string? band = Classify(rule, obs);
 
         if (band is not null)
         {
@@ -122,7 +122,10 @@ public sealed class ConditionEvaluator
             }
 
             st.Band = band;
-            st.Threshold = band == ConditionBand.Danger ? rule.Danger!.Value : rule.Warn;
+            // The number REPORTED is the one actually compared against, so a condition on a drive says
+            // 84.85 and one on the CPU says 95 — reporting the rule's figure while judging by another
+            // would make the episode unexplainable against the reading beside it.
+            st.Threshold = band == ConditionBand.Danger ? DangerLine(rule, obs)!.Value : WarnLine(rule, obs);
 
             if (!st.Open && nowMs - st.BreachSinceMs.Value >= (long)rule.FireForSec * 1000)
             {
@@ -134,7 +137,7 @@ public sealed class ConditionEvaluator
             return;
         }
 
-        if (obs.Value <= rule.Warn - rule.ClearMargin)
+        if (obs.Value <= WarnLine(rule, obs) - rule.ClearMargin)
         {
             // Past the deadband — a real clear. Start or hold the clear clock.
             st.BreachSinceMs = null;
@@ -289,10 +292,18 @@ public sealed class ConditionEvaluator
             Threshold: st.Threshold,
             EndReason: reason);
 
-    private static string? Classify(ThresholdRule rule, double value) =>
-        rule.Danger is { } danger && value >= danger ? ConditionBand.Danger
-        : value >= rule.Warn ? ConditionBand.Warn
+    private static string? Classify(ThresholdRule rule, MetricObservation obs) =>
+        DangerLine(rule, obs) is { } danger && obs.Value >= danger ? ConditionBand.Danger
+        : obs.Value >= WarnLine(rule, obs) ? ConditionBand.Warn
         : null;
+
+    // A target's own line where it has one, the rule's otherwise. The rule still decides WHETHER a danger
+    // band exists at all: a rule with no danger line does not gain one because a device published a
+    // critical temperature, or enabling per-device limits would silently add a severity nobody configured.
+    private static double WarnLine(ThresholdRule rule, MetricObservation obs) => obs.WarnC ?? rule.Warn;
+
+    private static double? DangerLine(ThresholdRule rule, MetricObservation obs) =>
+        rule.Danger is null ? null : obs.DangerC ?? rule.Danger;
 
     private static ThresholdRule? FindEnabledRule(MetricsThresholdPolicy policy, string ruleKey)
     {
@@ -307,7 +318,7 @@ public sealed class ConditionEvaluator
     // Internal keying only. The separator is one a rule key cannot contain (keys are [a-z0-9-]) and a mount
     // path or sensor label will not collide across, because the rule key is always the first segment.
     private static string TargetKey(string ruleKey, string? targetRef) =>
-        string.IsNullOrEmpty(targetRef) ? ruleKey : $"{ruleKey} {targetRef}";
+        string.IsNullOrEmpty(targetRef) ? ruleKey : $"{ruleKey}\0{targetRef}";
 
     /// <summary>The episode id carried on the wire: rule, target and open time. The open time is what makes
     /// it unique across a clear-and-recur on the same target.</summary>

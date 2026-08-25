@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — a sensor is judged against its own limits (`2.17.0`, Contracts `1.11.0`)
+
+Devices do not share a safe range. An NVMe warns at 80.85 °C and shuts down at 84.85; a GPU runs to 93
+and cuts at 98; a CPU sits somewhere else again. One line across all of them is either too slack for
+the drive or too tight for the card, so `SensorReading` carries `limitHighC` / `limitCriticalC` — read
+from hwmon's `tempN_max` and `tempN_crit` (falling back to `tempN_emergency`) — and the `HostTempC`
+rule reconciles each sensor against its own. `GpuDevice` gains `tempLimitC` / `tempShutdownC` from
+NVML on the same terms. A sensor that publishes nothing keeps the rule's line, and the rule still
+decides *whether* a danger band exists at all: a device's critical temperature can move that band but
+never conjure one nobody configured. `ConditionReading.threshold` reports the figure actually compared
+against, so an episode is explainable against the reading printed beside it.
+
+**A published limit is not automatically a limit.** The hwmon ABI carries these files with no validity
+flag, so a driver whose register is unimplemented emits a sentinel indistinguishable from a setting —
+a hard zero, or a saturation. NVMe stores temperatures in Kelvin and spells "unimplemented" as
+`0xFFFF`, which converts to 65261.85 °C. Both pass through a plausibility band: nothing is rated to
+shut down below 40 °C, and nothing silicon survives 150 °C. A critical below its own high line is an
+inconsistent pair and the critical half is dropped, because acting on it would fire the more severe
+band first. Limits keep two decimals rather than a reading's one — a limit is a setting, and rounding
+a drive's 80.85 to 80.8 moves the line an alert fires on.
+
+### Added — which channel speaks for a device (`2.17.0`, Contracts `1.11.0`)
+
+`SensorReading.primary` marks the channel to show when only one can be: a package temperature over its
+per-die channels, an NVMe composite over its component sensors, each DIMM for itself. `duplicateOf`
+names the reading a channel restates — a board's `TSI`/`PECI`/`SMBUSMASTER` channel relays the control
+temperature the CPU already publishes directly, so the two are one measurement on two paths.
+
+Both are decided from what a channel *is*, never from whether its value matches a neighbour's: two
+sensors reading alike today are still two sensors, and folding them on agreement would hide the day
+they diverge. The relay link is attributed only where the host has exactly one CPU package channel —
+with two sockets nothing in hwmon says which relay reads which package, so it is left unstated.
+
 ### Added — hwmon readings are kept as history (`2.16.0`)
 
 Every temperature channel and every turning fan writes a sample under the `sensor` entity kind, keyed

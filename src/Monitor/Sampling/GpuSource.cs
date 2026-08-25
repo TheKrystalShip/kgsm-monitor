@@ -41,6 +41,14 @@ public sealed partial class GpuSource(ILogger<GpuSource>? logger = null) : IDisp
 
     private const uint TemperatureGpu = 0;   // NVML_TEMPERATURE_GPU
 
+    // nvmlTemperatureThresholds_t. The driver holds several lines; these are the two worth reporting —
+    // the temperature the part is rated to run to, and the one at which the driver cuts power.
+    // nvmlTemperatureThresholds_t, in the header's order. GPU_MAX is 3; 4 is ACOUSTIC_MIN, the bottom of
+    // the fan curve, which is a plausible temperature and therefore passes every gate while meaning
+    // something else entirely.
+    private const uint ThresholdShutdown = 0;     // NVML_TEMPERATURE_THRESHOLD_SHUTDOWN
+    private const uint ThresholdMaxOperating = 3; // NVML_TEMPERATURE_THRESHOLD_GPU_MAX
+
     // Buffer sizes chosen so the ordinary case is one call. Both grow on InsufficientSize, so these are
     // a starting guess and never a cap.
     private const int InitialProcessBuffer = 64;
@@ -86,6 +94,8 @@ public sealed partial class GpuSource(ILogger<GpuSource>? logger = null) : IDisp
                 MemUsedBytes = memUsed,
                 SmPct = TryUtilization(handle),
                 TempC = TryTemperature(handle),
+                TempLimitC = TryThreshold(handle, ThresholdMaxOperating),
+                TempShutdownC = TryThreshold(handle, ThresholdShutdown),
                 PowerW = TryPower(handle),
                 PowerCapW = TryPowerCap(handle),
             });
@@ -275,6 +285,13 @@ public sealed partial class GpuSource(ILogger<GpuSource>? logger = null) : IDisp
     private static double? TryTemperature(nint handle) =>
         nvmlDeviceGetTemperature(handle, TemperatureGpu, out uint c) == Success ? c : null;
 
+    // A threshold the driver does not implement for this part comes back as an error or as a figure no
+    // silicon has — gated the same way a hwmon limit is, so one rule decides what counts as a setting.
+    private static double? TryThreshold(nint handle, uint which) =>
+        nvmlDeviceGetTemperatureThreshold(handle, which, out uint c) == Success
+            ? HwmonCatalog.PlausibleLimit(c)
+            : null;
+
     private static double? TryPower(nint handle) =>
         nvmlDeviceGetPowerUsage(handle, out uint mw) == Success ? mw / 1000.0 : null;
 
@@ -316,7 +333,8 @@ public sealed partial class GpuSource(ILogger<GpuSource>? logger = null) : IDisp
                     Name: ReadString(handle, nvmlDeviceGetName) ?? "(unknown)",
                     Uuid: ReadString(handle, nvmlDeviceGetUUID) ?? $"index-{i}",
                     MemTotalBytes: 0, MemUsedBytes: 0,
-                    SmPct: null, TempC: null, PowerW: null, PowerCapW: null));
+                    SmPct: null, TempC: null, PowerW: null, PowerCapW: null,
+                    TempLimitC: null, TempShutdownC: null));
             }
 
             _devices = [.. handles];
@@ -408,6 +426,7 @@ public sealed partial class GpuSource(ILogger<GpuSource>? logger = null) : IDisp
     [LibraryImport(Nvml)] private static partial int nvmlDeviceGetMemoryInfo(nint device, out NvmlMemory memory);
     [LibraryImport(Nvml)] private static partial int nvmlDeviceGetUtilizationRates(nint device, out NvmlUtilization utilization);
     [LibraryImport(Nvml)] private static partial int nvmlDeviceGetTemperature(nint device, uint sensorType, out uint temp);
+    [LibraryImport(Nvml)] private static partial int nvmlDeviceGetTemperatureThreshold(nint device, uint thresholdType, out uint temp);
     [LibraryImport(Nvml)] private static partial int nvmlDeviceGetPowerUsage(nint device, out uint milliwatts);
     [LibraryImport(Nvml)] private static partial int nvmlDeviceGetEnforcedPowerLimit(nint device, out uint milliwatts);
 

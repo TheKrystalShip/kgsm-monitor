@@ -183,6 +183,96 @@ internal static class HwmonCatalog
     }
 
     /// <summary>
+    /// The band a published thermal limit has to land in to be a limit at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>The hwmon ABI carries <c>tempN_max</c>/<c>crit</c>/<c>emergency</c> with <b>no validity
+    /// flag</b>, so a driver whose underlying register is unimplemented has nothing to say but a number.
+    /// What it emits is a sentinel that reads exactly like a setting: a hard zero, or a saturated value.
+    /// NVMe carries temperatures in Kelvin and spells "unimplemented" as <c>0xFFFF</c>, which converts to
+    /// 65261.85 °C — so the sentinel is a property of the spec, not of any one drive.</para>
+    /// <para>Neither can be told from a real setting except by plausibility. Nothing in a computer is
+    /// rated to shut down below 40 °C — a limit under it would be permanently breached — and nothing
+    /// silicon survives past 150 °C, so a figure outside that is a register that was never populated.</para>
+    /// </remarks>
+    private const double MinPlausibleLimitC = 40.0;
+    private const double MaxPlausibleLimitC = 150.0;
+
+    /// <summary>
+    /// A published limit, or null when the device did not really publish one. Shared by every source of a
+    /// limit — hwmon files and a GPU driver alike — so one rule decides what counts as a setting.
+    /// </summary>
+    internal static double? PlausibleLimit(double? c) =>
+        c is { } v && v >= MinPlausibleLimitC && v <= MaxPlausibleLimitC ? v : null;
+
+    /// <summary>
+    /// A device's two limits, gated and ordered. A critical below the high one is an inconsistent pair —
+    /// at least one of the registers is not what it claims — and the critical half is the one dropped,
+    /// because acting on a critical that sits below the warning line would fire the more severe band first.
+    /// </summary>
+    internal static (double? High, double? Critical) Limits(double? high, double? critical)
+    {
+        double? h = PlausibleLimit(high);
+        double? c = PlausibleLimit(critical);
+        if (h is { } hv && c is { } cv && cv < hv) c = null;
+        return (h, c);
+    }
+
+    /// <summary>
+    /// Whether this is the channel to show for its device when only one can be shown. False marks a
+    /// channel that another on the same device speaks for — never one that matters less.
+    /// </summary>
+    /// <remarks>
+    /// Judged from what the channel IS, not from whether its value happens to match a neighbour's. Two
+    /// sensors reading alike today are still two sensors, and folding them on that basis would hide the
+    /// day one drifts from the other.
+    /// </remarks>
+    internal static bool IsPrimary(string chip, string? label)
+    {
+        string c = chip.ToLowerInvariant();
+
+        // The package speaks for the CPU; per-die channels are a breakdown of it.
+        if (c is "k10temp" or "zenpower" or "zenpower3")
+            return label is null || !label.StartsWith("Tccd", StringComparison.Ordinal);
+
+        if (c is "coretemp")
+            return label is null || !label.StartsWith("Core ", StringComparison.Ordinal);
+
+        // NVMe's composite is defined by the spec as the drive's headline figure; the numbered sensors
+        // are the individual probes behind it.
+        if (c is "nvme")
+            return label is null or "Composite";
+
+        // A GPU's edge temperature is the one a driver reports as the device's; junction and memory are
+        // additional probes on the same die.
+        if (c is "amdgpu" or "nouveau" or "radeon")
+            return label is null or "edge";
+
+        // A relayed CPU reading is the CPU's own, arriving through the board.
+        if (IsSuperIo(c) && RelaysSilicon(label))
+            return false;
+
+        // Everything else is its own device: each DIMM, each board thermistor, each adapter. A chip the
+        // catalog does not know is primary too — nothing establishes that it is redundant.
+        return true;
+    }
+
+    /// <summary>
+    /// Whether a channel merely relays a reading another chip takes directly. Public because the walk has
+    /// to resolve WHICH channel it duplicates, and only the walk can see the other chips.
+    /// </summary>
+    internal static bool IsCpuRelay(string chip, string? label) => IsSuperIo(chip) && RelaysSilicon(label);
+
+    /// <summary>Whether a channel is a CPU's own package temperature, taken by the CPU's own driver.</summary>
+    internal static bool IsCpuPackage(string chip, string? label)
+    {
+        string c = chip.ToLowerInvariant();
+        if (c is "k10temp" or "zenpower" or "zenpower3") return label is null or "Tctl" or "Tdie";
+        if (c is "coretemp") return label is null || label.StartsWith("Package id ", StringComparison.Ordinal);
+        return false;
+    }
+
+    /// <summary>
     /// A human name for a fan tachometer.
     /// </summary>
     /// <remarks>

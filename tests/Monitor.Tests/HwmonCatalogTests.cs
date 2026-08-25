@@ -50,6 +50,15 @@ internal sealed class HwmonTree : IDisposable
         return this;
     }
 
+    /// <summary>Attach hwmon's published limit files to a channel — <c>tempN_max</c> / <c>tempN_crit</c>.</summary>
+    public HwmonTree Limit(string hwmonDir, string channel, long? max = null, long? crit = null)
+    {
+        string dir = Path.Combine(Root, hwmonDir);
+        if (max is { } m) File.WriteAllText(Path.Combine(dir, channel + "_max"), m + "\n");
+        if (crit is { } c) File.WriteAllText(Path.Combine(dir, channel + "_crit"), c + "\n");
+        return this;
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(Path.GetDirectoryName(Path.GetDirectoryName(Root)!)!, recursive: true); }
@@ -294,4 +303,117 @@ public class FanReadingTests
     [Fact]
     public void No_hwmon_tree_yields_no_fans()
         => Assert.Empty(SensorSource.Read(Path.Combine(Path.GetTempPath(), "definitely-not-here")).Fans);
+}
+
+public class PublishedLimitTests
+{
+    [Theory]
+    [InlineData(80.85)]   // an NVMe warning threshold
+    [InlineData(84.85)]   // its critical
+    [InlineData(80.0)]    // a super-I/O tempN_max
+    [InlineData(100.0)]   // an Intel Tjmax
+    public void A_plausible_limit_is_kept(double c) => Assert.Equal(c, HwmonCatalog.PlausibleLimit(c));
+
+    [Theory]
+    [InlineData(0.0)]        // the register was never populated — jc42 publishes max=0 AND crit=0
+    [InlineData(65261.85)]   // NVMe carries Kelvin; 0xFFFF K is the spec's "unimplemented"
+    [InlineData(-273.1)]     // the floor of the same encoding
+    [InlineData(39.9)]       // nothing shuts down below 40 °C; such a limit is breached at idle
+    [InlineData(150.1)]
+    public void An_implausible_limit_is_no_limit(double c) => Assert.Null(HwmonCatalog.PlausibleLimit(c));
+
+    [Fact]
+    public void A_missing_limit_stays_missing() => Assert.Null(HwmonCatalog.PlausibleLimit(null));
+
+    [Fact]
+    public void An_inverted_pair_drops_its_critical()
+    {
+        // A critical below the warning line means at least one register is not what it claims. Keeping it
+        // would fire the more severe band first, which is the wrong way to be wrong.
+        (double? high, double? crit) = HwmonCatalog.Limits(90.0, 70.0);
+        Assert.Equal(90.0, high);
+        Assert.Null(crit);
+    }
+
+    [Fact]
+    public void A_consistent_pair_survives_intact()
+    {
+        (double? high, double? crit) = HwmonCatalog.Limits(80.85, 84.85);
+        Assert.Equal(80.85, high);
+        Assert.Equal(84.85, crit);
+    }
+
+    [Fact]
+    public void Limits_are_read_off_the_channel_and_gated()
+    {
+        // The NVMe layout this was measured against: a real pair on the composite, and the Kelvin
+        // sentinel on the component sensors.
+        using var tree = new HwmonTree();
+        tree.Chip("hwmon0", "nvme", "nvme0",
+            ("temp1", 48900, "Composite"), ("temp2", 49800, "Sensor 1"));
+        tree.Limit("hwmon0", "temp1", max: 80850, crit: 84850);
+        tree.Limit("hwmon0", "temp2", max: 65261850, crit: null);
+
+        var temps = SensorSource.Read(tree.Root).Temps;
+
+        SensorReadingLimits(temps, "temp1", 80.85, 84.85);
+        SensorReadingLimits(temps, "temp2", null, null);
+    }
+
+    private static void SensorReadingLimits(
+        TheKrystalShip.KGSM.Monitor.Contracts.SensorReading[] temps, string channel, double? high, double? crit)
+    {
+        var r = temps.Single(t => t.Id.EndsWith("/" + channel));
+        Assert.Equal(high, r.LimitHighC);
+        Assert.Equal(crit, r.LimitCriticalC);
+    }
+}
+
+public class PrimaryAndDuplicateTests
+{
+    [Theory]
+    [InlineData("k10temp", "Tctl", true)]
+    [InlineData("k10temp", "Tccd1", false)]     // a breakdown of the package, not its headline
+    [InlineData("coretemp", "Package id 0", true)]
+    [InlineData("coretemp", "Core 3", false)]
+    [InlineData("nvme", "Composite", true)]
+    [InlineData("nvme", "Sensor 1", false)]
+    [InlineData("jc42", null, true)]            // each DIMM is its own device
+    [InlineData("nct6792", "CPUTIN", true)]
+    [InlineData("nct6792", "TSI0_TEMP", false)] // the CPU's own reading, relayed
+    [InlineData("some_new_chip", null, true)]   // unknown hardware is never assumed redundant
+    public void Primary_marks_the_headline_channel_for_a_device(string chip, string? label, bool primary)
+        => Assert.Equal(primary, HwmonCatalog.IsPrimary(chip, label));
+
+    [Fact]
+    public void A_relayed_cpu_channel_names_the_reading_it_restates()
+    {
+        using var tree = new HwmonTree();
+        tree.Chip("hwmon1", "k10temp", "0000:00:18.3", ("temp1", 61400, "Tctl"), ("temp3", 58800, "Tccd1"))
+            .Chip("hwmon5", "nct6792", "nct6775.656",
+                  ("temp7", 61500, "SMBUSMASTER 0"), ("temp13", 61500, "TSI0_TEMP"), ("temp2", 46500, "CPUTIN"));
+
+        var temps = SensorSource.Read(tree.Root).Temps;
+        const string pkg = "k10temp/0000:00:18.3/temp1";
+
+        Assert.Equal(pkg, temps.Single(t => t.Label == "TSI0_TEMP").DuplicateOf);
+        Assert.Equal(pkg, temps.Single(t => t.Label == "SMBUSMASTER 0").DuplicateOf);
+        // A board thermistor measures the socket, not the die — it restates nothing.
+        Assert.Null(temps.Single(t => t.Label == "CPUTIN").DuplicateOf);
+        Assert.Null(temps.Single(t => t.Label == "Tctl").DuplicateOf);
+    }
+
+    [Fact]
+    public void With_two_cpu_packages_a_relay_is_left_unattributed()
+    {
+        // Two sockets and two relays: nothing in hwmon says which relay reads which package, so the link
+        // is left unstated rather than guessed at.
+        using var tree = new HwmonTree();
+        tree.Chip("hwmon1", "coretemp", "0000:00:18.3", ("temp1", 61400, "Package id 0"))
+            .Chip("hwmon2", "coretemp", "0000:00:19.3", ("temp1", 60100, "Package id 1"))
+            .Chip("hwmon5", "nct6792", "nct6775.656", ("temp13", 61500, "TSI0_TEMP"));
+
+        var temps = SensorSource.Read(tree.Root).Temps;
+        Assert.Null(temps.Single(t => t.Label == "TSI0_TEMP").DuplicateOf);
+    }
 }

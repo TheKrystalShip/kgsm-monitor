@@ -146,7 +146,14 @@ public sealed record MetricsThresholdPolicy(IReadOnlyList<ThresholdRule> Rules)
 /// for a singleton host metric and for server-scope metrics (keyed by <see cref="ServerId"/> instead).</param>
 /// <param name="ServerId">The reporting server's instance id for a server-scope metric, else null.</param>
 /// <param name="Value">The measured value, compared against the rule's bands.</param>
-public readonly record struct MetricObservation(string? RefKey, string? ServerId, double Value);
+/// <param name="WarnC">
+/// A warn line belonging to THIS target, overriding the rule's. Set when the measured thing publishes its
+/// own — a drive that says it is hot at 80.85 °C is not usefully judged against a figure meant for a CPU.
+/// Null leaves the rule's own line in force, which is what every target without a published limit uses.
+/// </param>
+/// <param name="DangerC">The same, for the danger line. Ignored unless the rule itself defines one.</param>
+public readonly record struct MetricObservation(
+    string? RefKey, string? ServerId, double Value, double? WarnC = null, double? DangerC = null);
 
 /// <summary>
 /// All the <see cref="Snapshot"/>-field knowledge the threshold source needs, in one place. The evaluator
@@ -251,8 +258,14 @@ public static class ThresholdMetrics
 
             case ThresholdMetric.HostTempC:
             {
+                // A sensor that publishes its own limits is judged against them. Devices do not share a
+                // safe range — an NVMe warns at 80.85 °C and shuts down at 84.85, a GPU runs to 93 and
+                // cuts at 98 — so one line across all of them is either too slack for the drive or too
+                // tight for the card. The rule's own numbers stay in force for a sensor with no opinion.
                 foreach (SensorReading sensor in snap.Sensors ?? [])
-                    yield return new MetricObservation(SensorRef(sensor), null, sensor.ValueC);
+                    yield return new MetricObservation(
+                        SensorRef(sensor), null, sensor.ValueC,
+                        WarnC: sensor.LimitHighC, DangerC: sensor.LimitCriticalC);
                 break;
             }
 

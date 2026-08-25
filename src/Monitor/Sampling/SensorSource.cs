@@ -78,13 +78,24 @@ public sealed class SensorSource(string hwmonRoot = "/sys/class/hwmon")
                 }
 
                 (string? role, string? name) = HwmonCatalog.Classify(chip.Name, label, ordinal, total);
+
+                // The device's own opinion of hot, when it has one. `crit` is the throttle/shutdown line;
+                // `emergency` stands in where a driver publishes that instead. Both go through the same
+                // plausibility gate — the ABI gives no way to tell an unset register from a setting.
+                (double? high, double? critical) = HwmonCatalog.Limits(
+                    ReadMilliC(chip.Dir, channel, "max"),
+                    ReadMilliC(chip.Dir, channel, "crit") ?? ReadMilliC(chip.Dir, channel, "emergency"));
+
                 temps.Add(new SensorReading(
                     Id: $"{chip.Name}/{chip.Device}/{channel}",
                     Chip: chip.Name,
                     Label: label,
                     ValueC: valueC,
                     Role: role,
-                    Name: name));
+                    Name: name,
+                    LimitHighC: high,
+                    LimitCriticalC: critical,
+                    Primary: HwmonCatalog.IsPrimary(chip.Name, label)));
             }
 
             foreach (string inputPath in Sorted(chip.Dir, "fan*_input"))
@@ -109,8 +120,54 @@ public sealed class SensorSource(string hwmonRoot = "/sys/class/hwmon")
             }
         }
 
-        return new HwmonSample([.. temps], [.. fans], withheld);
+        return new HwmonSample([.. ResolveDuplicates(temps), ], [.. fans], withheld);
     }
+
+    /// <summary>
+    /// Point each relayed CPU channel at the reading it restates.
+    /// </summary>
+    /// <remarks>
+    /// <para>A super-I/O <c>TSI</c>/<c>PECI</c>/<c>SMBUSMASTER</c> channel reads back the control
+    /// temperature the CPU publishes about itself, which the CPU's own driver already reports directly.
+    /// That makes them one measurement on two paths, and it is knowable from what the channels are —
+    /// never from their values agreeing, which would fold two genuinely separate sensors the moment they
+    /// happened to match and hide the day they diverged.</para>
+    /// <para>Attributed only when the host has exactly one CPU package channel. A board with two relays
+    /// and two sockets maps one relay to each, and nothing in hwmon says which — so with any other count
+    /// the link is left unstated rather than guessed.</para>
+    /// </remarks>
+    private static List<SensorReading> ResolveDuplicates(List<SensorReading> temps)
+    {
+        string? packageId = null;
+        int packages = 0;
+        foreach (SensorReading r in temps)
+        {
+            if (!HwmonCatalog.IsCpuPackage(r.Chip, r.Label)) continue;
+            packages++;
+            packageId = r.Id;
+        }
+
+        if (packages != 1) return temps;
+
+        for (int i = 0; i < temps.Count; i++)
+        {
+            if (HwmonCatalog.IsCpuRelay(temps[i].Chip, temps[i].Label))
+                temps[i] = temps[i] with { DuplicateOf = packageId };
+        }
+
+        return temps;
+    }
+
+    /// <summary>
+    /// "temp3" + "crit" -> the value of <c>temp3_crit</c> in °C, or null when the file is absent or
+    /// unreadable. Kept to two decimals rather than the one a reading gets: a limit is a device SETTING,
+    /// not a measurement at 0.1 °C granularity, and NVMe's are stored in Kelvin so they land on fractions
+    /// — rounding a drive's 80.85 °C warning to 80.8 moves the line the alert fires on.
+    /// </summary>
+    private static double? ReadMilliC(string chipDir, string channel, string suffix) =>
+        TryReadLong(Path.Combine(chipDir, $"{channel}_{suffix}"), out long milli)
+            ? Math.Round(milli / 1000.0, 2)
+            : null;
 
     /// <summary>
     /// The chip's stable identity: the basename its <c>device</c> symlink resolves to — a PCI address
