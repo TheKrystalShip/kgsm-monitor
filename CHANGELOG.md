@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — a range summary for a whole entity kind (`2.18.0`)
+
+`GET /metrics/history/summary?kind=…&range=…` returns one aggregate row per entity and metric — min,
+max, mean and the latest value, with the sample count behind them — instead of a series each. A
+surface drawing a range per hwmon channel would otherwise make one request per channel, every one
+returning a full window of points it reduces to three numbers.
+
+Tier selection matches `GET /metrics/history` exactly, so a summary and a series over the same range
+describe the same rows. On the rollup tier the aggregate is taken over per-bucket extremes — a min of
+bucket minima is the true minimum of the samples beneath them — and the mean is weighted by each
+bucket's sample count rather than treating a sparse bucket as equal to a full one. An entity with
+nothing in the window yields no row, because an absent entity is not one reading zero.
+
 ### Added — a sensor is judged against its own limits (`2.17.0`, Contracts `1.11.0`)
 
 Devices do not share a safe range. An NVMe warns at 80.85 °C and shuts down at 84.85; a GPU runs to 93

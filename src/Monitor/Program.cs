@@ -240,6 +240,23 @@ app.MapGet("/metrics", (MetricsSampler sampler) =>
 // history is enabled (the store singleton exists).
 if (options.HistoryEnabled)
 {
+    // One aggregate row per entity of a kind, for a surface that draws N ranges rather than N curves.
+    // Registered before the per-entity route: both live under /metrics/history and the literal segment
+    // has to be matched as itself, not taken for an id.
+    app.MapGet("/metrics/history/summary", async (HistoryStore store, string? kind, string? range, CancellationToken ct) =>
+    {
+        string entityKind = kind switch
+        {
+            "host" => "host",
+            "leaf" => "leaf",
+            "gpu" => "gpu",
+            "sensor" => "sensor",
+            _ => "server",
+        };
+        MetricsSummaryResponse resp = await store.QuerySummaryAsync(entityKind, range, ct);
+        return Results.Json(resp, MonitorHistoryJsonContext.Default.MetricsSummaryResponse);
+    });
+
     app.MapGet("/metrics/history", async (HistoryStore store, string? kind, string? id, string? range, CancellationToken ct) =>
     {
         // An unrecognised kind falls to "server" rather than 400-ing, which is what the endpoint has always

@@ -721,6 +721,77 @@ public sealed class HistoryStore : IDisposable
         return new MetricsHistoryResponse(entityId, entityKind, rangeStr, step, useRaw ? "raw" : "rollup", series);
     }
 
+    /// <summary>
+    /// Aggregate every entity of one kind over a window — min, max, mean and the most recent value, in
+    /// one query. Tier is chosen exactly as <see cref="QueryHistoryAsync"/> chooses it, so a summary and
+    /// a series over the same range describe the same rows.
+    /// </summary>
+    /// <remarks>
+    /// On the rollup tier the aggregate is taken over per-bucket extremes: a min of bucket minima is the
+    /// true minimum of the samples beneath them, and the mean is weighted by each bucket's sample count
+    /// rather than treating a sparse bucket as equal to a full one. An entity with nothing in the window
+    /// yields no row — an absent entity is not one reading zero.
+    /// </remarks>
+    public async Task<MetricsSummaryResponse> QuerySummaryAsync(
+        string entityKind, string? rangeStr, CancellationToken ct = default)
+    {
+        rangeStr ??= MetricsRange.OneHour;
+        TimeSpan duration = MetricsRange.Parse(rangeStr) ?? TimeSpan.FromHours(1);
+
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        long fromMs = nowMs - (long)duration.TotalMilliseconds;
+        bool useRaw = duration.TotalHours <= _options.RawRetentionHours;
+
+        var entries = new List<MetricsSummaryEntry>();
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            SqliteConnection conn = await EnsureAsync(ct).ConfigureAwait(false);
+            await using SqliteCommand cmd = conn.CreateCommand();
+            cmd.CommandText = useRaw
+                ? """
+                  SELECT entity_id, metric, MIN(value), MAX(value), AVG(value), COUNT(*),
+                         (SELECT value FROM sample s2
+                           WHERE s2.entity_kind = s.entity_kind AND s2.entity_id = s.entity_id
+                             AND s2.metric = s.metric AND s2.ts <= $to
+                           ORDER BY s2.ts DESC LIMIT 1)
+                  FROM sample s
+                  WHERE entity_kind = $k AND ts >= $from AND ts <= $to
+                  GROUP BY entity_id, metric
+                  """
+                : """
+                  SELECT entity_id, metric, MIN(min), MAX(max), SUM(avg * n) / SUM(n), SUM(n),
+                         (SELECT avg FROM rollup r2
+                           WHERE r2.entity_kind = r.entity_kind AND r2.entity_id = r.entity_id
+                             AND r2.metric = r.metric AND r2.bucket_ts <= $to
+                           ORDER BY r2.bucket_ts DESC LIMIT 1)
+                  FROM rollup r
+                  WHERE entity_kind = $k AND bucket_ts >= $from AND bucket_ts <= $to
+                  GROUP BY entity_id, metric
+                  """;
+            cmd.Parameters.AddWithValue("$k", entityKind);
+            cmd.Parameters.AddWithValue("$from", fromMs);
+            cmd.Parameters.AddWithValue("$to", nowMs);
+
+            await using SqliteDataReader reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                entries.Add(new MetricsSummaryEntry(
+                    EntityId: reader.GetString(0),
+                    Metric: reader.GetString(1),
+                    Min: reader.GetDouble(2),
+                    Max: reader.GetDouble(3),
+                    Avg: Math.Round(reader.GetDouble(4), 2),
+                    Last: reader.IsDBNull(6) ? reader.GetDouble(3) : reader.GetDouble(6),
+                    Samples: reader.GetInt64(5)));
+            }
+        }
+        finally { _gate.Release(); }
+
+        return new MetricsSummaryResponse(entityKind, rangeStr, useRaw ? "raw" : "rollup", entries);
+    }
+
     public void Dispose()
     {
         _conn?.Dispose();

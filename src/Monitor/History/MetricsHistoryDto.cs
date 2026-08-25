@@ -41,3 +41,34 @@ public static class MetricsRange
         _ => null
     };
 }
+
+/// <summary>
+/// The range summary served from <c>GET /metrics/history/summary</c>: one aggregate row per entity and
+/// metric of a kind, rather than a series each.
+/// </summary>
+/// <remarks>
+/// <para>Exists because a panel that draws N ranges wants N triples, not N curves. Reading a range bar
+/// for every hwmon channel through the per-entity endpoint is one request per channel, each returning a
+/// full window of points so the client can reduce it to three numbers it could have been handed.</para>
+/// <para>Aggregated over whichever tier covers the range, so a summary is exact for the window it
+/// names: the rollup tier already stores per-bucket min/max, and a min-of-mins over buckets is the same
+/// figure as a min over the raw samples beneath them. An entity with no rows in the window is absent
+/// from <see cref="Entries"/> rather than present with zeros.</para>
+/// </remarks>
+public sealed record MetricsSummaryResponse(
+    string Kind,
+    string Range,
+    string Tier,
+    List<MetricsSummaryEntry> Entries);
+
+/// <summary>One entity's aggregate for one metric over the window.</summary>
+/// <param name="Samples">How many rows the figures were taken over — what makes a thin window visible
+/// as thin, instead of a range that looks authoritative because it is drawn the same as any other.</param>
+public sealed record MetricsSummaryEntry(
+    string EntityId,
+    string Metric,
+    double Min,
+    double Max,
+    double Avg,
+    double Last,
+    long Samples);

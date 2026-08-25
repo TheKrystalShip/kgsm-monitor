@@ -7,11 +7,12 @@ namespace TheKrystalShip.KGSM.Monitor.History;
 /// NOT in <c>Monitor.Contracts</c> (the shared <c>Snapshot</c> contract does not change). Keeps the
 /// history endpoint reflection-free so the daemon stays Native-AOT/trim-clean, and mirrors the
 /// snapshot context's camelCase naming for the SPA. Covers the metrics-history response
-/// (<c>GET /metrics/history</c>), the daemon self-report (<c>GET /stats</c>) and the accumulated
+/// (<c>GET /metrics/history</c>) and its range summary (<c>GET /metrics/history/summary</c>), the daemon self-report (<c>GET /stats</c>) and the accumulated
 /// per-instance memory footprints (<c>GET /footprint</c>).
 /// </summary>
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(MetricsHistoryResponse))]
+[JsonSerializable(typeof(MetricsSummaryResponse))]
 [JsonSerializable(typeof(MonitorStats))]
 [JsonSerializable(typeof(FootprintResponse))]
 public sealed partial class MonitorHistoryJsonContext : JsonSerializerContext;
