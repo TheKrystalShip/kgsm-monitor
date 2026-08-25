@@ -182,3 +182,56 @@ public class HistoryStoreTests
         Assert.Contains(rows, r => r.Metric == "diskBytes" && r.Value == 4096);
     }
 }
+
+
+public class SensorHistoryMappingTests
+{
+    private static Snapshot Frame(SensorReading[] sensors, FanReading[]? fans = null) =>
+        new(Ts: 1000, IntervalMs: 1000, Hostname: "h", UptimeSec: 1,
+            Cpu: new CpuMetrics(0, [], new LoadAvg(0, 0, 0), null),
+            Mem: new MemoryMetrics(0, 0, 0, 0, 0, 0, 0, 0),
+            Disk: new DiskMetrics([], new DiskIo(0, 0)),
+            Net: new NetworkMetrics([]),
+            Sensors: sensors, Servers: [], Leaves: [], Conditions: [], Fans: fans);
+
+    [Fact]
+    public void Each_channel_is_keyed_by_its_stable_id_not_its_chip()
+    {
+        // Two DDR4 DIMMs are both chip "jc42". Keyed on the chip they would interleave into one curve;
+        // the id is what makes a per-module series addressable.
+        var rows = new List<HistoryRow>();
+        MetricsPersistService.MapSensorMetrics(rows, Frame([
+            new SensorReading("jc42/0-0018/temp1", "jc42", null, 45.5, "memory", "Memory module 1"),
+            new SensorReading("jc42/0-0019/temp1", "jc42", null, 44.8, "memory", "Memory module 2"),
+        ]), 1000);
+
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, r => Assert.Equal("sensor", r.Kind));
+        Assert.All(rows, r => Assert.Equal("tempC", r.Metric));
+        Assert.Equal(2, rows.Select(r => r.Id).Distinct().Count());
+        Assert.Equal(45.5, rows.Single(r => r.Id == "jc42/0-0018/temp1").Value);
+    }
+
+    [Fact]
+    public void A_fan_keeps_its_own_metric_name()
+    {
+        // An RPM and a °C are different quantities; one metric name covering both would let a query sum them.
+        var rows = new List<HistoryRow>();
+        MetricsPersistService.MapSensorMetrics(rows, Frame(
+            [new SensorReading("k10temp/0000:00:18.3/temp1", "k10temp", "Tctl", 61.0, "cpu", "CPU")],
+            [new FanReading("nct6792/nct6775.656/fan1", "nct6792", null, 2410, "Fan 1")]), 1000);
+
+        Assert.Equal("tempC", rows.Single(r => r.Id.Contains("temp1")).Metric);
+        HistoryRow fan = rows.Single(r => r.Id.EndsWith("fan1"));
+        Assert.Equal("rpm", fan.Metric);
+        Assert.Equal(2410, fan.Value);
+    }
+
+    [Fact]
+    public void A_frame_with_no_hwmon_writes_no_rows()
+    {
+        var rows = new List<HistoryRow>();
+        MetricsPersistService.MapSensorMetrics(rows, Frame([]), 1000);
+        Assert.Empty(rows);
+    }
+}

@@ -57,6 +57,7 @@ public sealed class MetricsPersistService : BackgroundService
                         MapLeafMetrics(rows, lm, snap.Ts);
                     foreach (GpuDevice gpu in snap.Gpu?.Devices ?? [])
                         MapGpuMetrics(rows, gpu, snap.Ts);
+                    MapSensorMetrics(rows, snap, snap.Ts);
 
                     if (rows.Count > 0)
                     {
@@ -157,6 +158,29 @@ public sealed class MetricsPersistService : BackgroundService
             rows.Add(new HistoryRow("gpu", gpu.Uuid, "tempC", ts, Math.Round(temp, 1)));
         if (gpu.PowerW is { } power)
             rows.Add(new HistoryRow("gpu", gpu.Uuid, "powerW", ts, Math.Round(power, 1)));
+    }
+
+    /// <summary>
+    /// One row per hwmon channel, under the <c>sensor</c> entity kind and keyed by the reading's
+    /// <see cref="SensorReading.Id"/> — which is what makes a per-channel series addressable at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>The id rather than the chip name, because chip names are not unique: a board with two DDR4
+    /// DIMMs reports two chips both called <c>jc42</c>, and a series keyed on that would interleave two
+    /// modules into one curve. The id is also stable across a reboot, so the series survives the hwmon
+    /// index being handed out in a different order.</para>
+    /// <para>Fans keep the same entity kind and their own metric name: an RPM and a °C are different
+    /// quantities, and a query that could return both under one metric would be summing them.</para>
+    /// <para>Only what the daemon published this tick is written. A channel it withheld as an unconnected
+    /// pin was never a measurement, so it leaves no row and no gap to explain.</para>
+    /// </remarks>
+    internal static void MapSensorMetrics(List<HistoryRow> rows, Snapshot s, long ts)
+    {
+        foreach (SensorReading sensor in s.Sensors ?? [])
+            rows.Add(new HistoryRow("sensor", sensor.Id, "tempC", ts, sensor.ValueC));
+
+        foreach (FanReading fan in s.Fans ?? [])
+            rows.Add(new HistoryRow("sensor", fan.Id, "rpm", ts, fan.Rpm));
     }
 
     internal static void MapHostMetrics(List<HistoryRow> rows, string hostId, Snapshot s, long ts)

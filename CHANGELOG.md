@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — hwmon readings are kept as history (`2.16.0`)
+
+Every temperature channel and every turning fan writes a sample under the `sensor` entity kind, keyed
+by the reading's `id`: `GET /metrics/history?kind=sensor&id=<id>` serves the series, and the rollup
+tier's existing avg/min/max per bucket therefore covers them with no new machinery. The id rather than
+the chip name is what makes this addressable at all — chip names are not unique, and a series keyed on
+one would interleave a board's two `jc42` DIMMs into a single curve.
+
+Fans keep their own `rpm` metric beside `tempC`. Different quantities under one metric name would let a
+query sum an RPM into a temperature. A channel withheld as an unconnected pin was never a measurement,
+so it writes no row and leaves no gap to account for.
+
 ### Added — temperatures and fans that say what they measure (`2.15.0`, Contracts `1.10.0`)
 
 hwmon names a channel after the register that produced it — `Tctl`, `AUXTIN1`, `Composite` — which

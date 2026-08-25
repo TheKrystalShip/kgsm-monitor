@@ -250,6 +250,7 @@ if (options.HistoryEnabled)
             "host" => "host",
             "leaf" => "leaf",
             "gpu" => "gpu",
+            "sensor" => "sensor",
             _ => "server",
         };
         if (string.IsNullOrEmpty(id))
