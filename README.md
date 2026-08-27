@@ -92,11 +92,12 @@ native servers read io straight from `/proc` as root, so they need no such flag.
 
 The watch-list refreshes on a slow timer (`Monitor__ServerResyncMs`, off the metrics tick
 since it spawns `kgsm.sh`). The low-latency half comes from the engine's append-only event
-journal, which the monitor tails: each `instance_started/stopped/removed/uninstalled` line
-*nudges* an immediate resync, so a freshly-started server shows up sub-second rather than after
-up to a full resync interval. Nothing is configured on the engine side and nothing is reserved
-here — the engine appends and holds no list of readers, so any number of consumers tail the same
-files. The periodic resync stays the watch-list's source of truth; set
+journal, which the monitor tails: each `server.started`, `server.stopped`,
+`server.uninstall.removed` or `server.uninstalled` line *nudges* an immediate resync, so a
+freshly-started server shows up sub-second rather than after up to a full resync interval. Nothing
+is configured on the engine side and nothing is reserved here — the engine appends and holds no
+list of readers, so any number of consumers tail the same files. The periodic resync stays the
+watch-list's source of truth; set
 `Monitor__EventsEnabled=false` to stop reading the journal and run resync-only.
 
 ## Deploy

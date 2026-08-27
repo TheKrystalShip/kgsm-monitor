@@ -26,12 +26,13 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// </para>
 /// <para>
 /// <b>Event-driven delta (the "watch" half of list+watch):</b> KGSM lifecycle
-/// events (<c>instance_started/stopped/removed/uninstalled</c>) are read from the engine's
-/// append-only journal at <see cref="MonitorOptions.KgsmJournalDir"/>, which the engine
-/// is the sole writer of. Each event simply <em>nudges</em> an immediate resync rather than
-/// mutating the list directly: the event payload carries only the instance name, not the
-/// cgroup-resolution inputs (compose-file / pid-file / systemd unit), so a partial "add"
-/// would need a lookup anyway — re-listing via the proven <see cref="IInstanceService.GetAll"/>
+/// events (<c>server.started</c>, <c>server.stopped</c>, <c>server.uninstall.removed</c> and
+/// <c>server.uninstalled</c>) are read from the engine's append-only journal at
+/// <see cref="MonitorOptions.KgsmJournalDir"/>, which the engine is the sole writer of. Each event
+/// simply <em>nudges</em> an immediate resync rather than mutating the list directly: the event
+/// payload carries only the instance name, not the cgroup-resolution inputs (compose-file /
+/// pid-file / systemd unit), so a partial "add" would need a lookup anyway — re-listing via the
+/// proven <see cref="IInstanceService.GetAll"/>
 /// keeps the watch-list <b>single-writer</b> (no lock on the volatile swap) and self-heals
 /// on the best-effort event channel. The periodic resync stays the floor; events only cut
 /// the latency from "up to <see cref="MonitorOptions.ServerResyncMs"/>" to "sub-second".

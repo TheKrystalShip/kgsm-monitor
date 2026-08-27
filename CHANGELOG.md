@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — this daemon's events carry dotted names (`2.20.0`)
+
+The three events this daemon writes are named `host.threshold.breached`, `host.threshold.cleared` and
+`server.memory.oom_killed` — the ecosystem's own vocabulary, where the name's hierarchy is what a
+reader groups and renders on without holding a table of event types.
+
 ### Changed — a threshold episode carries its own weight (`2.19.0`)
 
 A threshold episode says how much it matters on the envelope. The band it reached is the severity —

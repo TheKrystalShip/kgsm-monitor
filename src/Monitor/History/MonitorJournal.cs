@@ -41,13 +41,13 @@ public sealed class MonitorJournal(IEventJournalWriter writer, ILogger<MonitorJo
     : JournalRecorder(writer, logger)
 {
     /// <summary>A measured value crossed a line this host watches.</summary>
-    public const string BreachedEvent = "host_threshold_breached";
+    public const string BreachedEvent = "host.threshold.breached";
 
     /// <summary>A firing condition stopped firing — which is not always a recovery.</summary>
-    public const string ClearedEvent = "host_threshold_cleared";
+    public const string ClearedEvent = "host.threshold.cleared";
 
     /// <summary>The kernel killed a process in a game server's cgroup for want of memory.</summary>
-    public const string ServerOomEvent = "server_memory_oom";
+    public const string ServerOomEvent = "server.memory.oom_killed";
 
     /// <summary>The three names, typed so the writer can take them.</summary>
     /// <remarks>

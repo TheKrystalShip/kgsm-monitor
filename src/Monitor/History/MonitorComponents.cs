@@ -5,7 +5,7 @@ namespace TheKrystalShip.KGSM.Monitor.History;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Each is a <c>leaf_degraded</c> component. ⚠ Every one of these was previously a log line and
+/// Each is a <c>leaf.degraded</c> component. ⚠ Every one of these was previously a log line and
 /// nothing else — the <c>/health</c> endpoint answers a literal <c>ok</c>, so a monitor with a frozen
 /// frame, no per-server network numbers, or a dead event listener reports itself operational to every
 /// surface on this host.

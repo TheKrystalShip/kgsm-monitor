@@ -69,7 +69,7 @@ if (options.KgsmEnabled)
         EventStartPosition = EventStartPosition.Tail
     });
 
-    // Read every producer's journal, not the engine's alone. The supervisor owns instance_started
+    // Read every producer's journal, not the engine's alone. The supervisor owns server.started
     // for a native server, so a reader of the engine's journal alone learns of a start only when
     // the resync floor comes round — the event is there to react sooner, and half of them were
     // landing somewhere this daemon was not looking.

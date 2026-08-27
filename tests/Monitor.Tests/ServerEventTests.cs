@@ -148,7 +148,7 @@ public class ServerEventTests
             // source-generated KgsmJsonContext.
             await AppendEventAsync(journal,
                 """
-                {"EventType":"instance_started","Data":{"InstanceName":"7dtd"},"Timestamp":"2026-06-11T00:00:00Z","Hostname":"test","KGSMVersion":"1.2.3"}
+                {"EventType":"server.started","Data":{"InstanceName":"7dtd"},"Timestamp":"2026-06-11T00:00:00Z","Hostname":"test","KGSMVersion":"1.2.3"}
                 """);
 
             Assert.True(

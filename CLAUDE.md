@@ -152,7 +152,7 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
 - **`Monitor__KgsmJournalDir` names the engine's journal, not the only one read.**
   `AddKgsmJournalFederation` tails every producer, and it must stay registered **after**
   `AddKgsmServices` — above it the single-journal registration wins, silently, and a native
-  `instance_started` (the **supervisor's** event, in its own journal) reaches nothing here. The
+  `server.started` (the **supervisor's** event, in its own journal) reaches nothing here. The
   setting exists because the engine's location is configurable; the rest are found at their own state
   directories. This daemon's own journal is among them, which costs nothing: the four handlers are
   keyed by payload type, and a threshold episode matches none of them.
