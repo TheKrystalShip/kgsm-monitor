@@ -4,6 +4,8 @@ using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Lifecycle;
 using TheKrystalShip.KGSM.Monitor.History;
 
+using TheKrystalShip.KGSM.Events;
+
 namespace TheKrystalShip.KGSM.Monitor.Tests;
 
 /// <summary>
@@ -126,8 +128,9 @@ public sealed class MonitorLifecycleTests
             public string Producer => "kgsm-monitor";
 
             public ValueTask<bool> AppendAsync(
-                string eventType, JsonElement data, string? actor = null, string? origin = null,
-                CancellationToken token = default)
+            EventName eventType, JsonElement data, string? actor = null, string? origin = null,
+            EventSeverity? severity = null, EventOutcome? outcome = null, string? summary = null,
+            CancellationToken token = default)
             {
                 string? component =
                     data.TryGetProperty(LeafLifecycleFields.Component, out JsonElement c)

@@ -4,6 +4,8 @@ using TheKrystalShip.KGSM.Monitor.Contracts;
 using TheKrystalShip.KGSM.Monitor.Thresholds;
 using TheKrystalShip.KGSM.Services;
 
+using TheKrystalShip.KGSM.Events;
+
 namespace TheKrystalShip.KGSM.Monitor.History;
 
 /// <summary>
@@ -47,6 +49,15 @@ public sealed class MonitorJournal(IEventJournalWriter writer, ILogger<MonitorJo
     /// <summary>The kernel killed a process in a game server's cgroup for want of memory.</summary>
     public const string ServerOomEvent = "server_memory_oom";
 
+    /// <summary>The three names, typed so the writer can take them.</summary>
+    /// <remarks>
+    /// Derived from the constants above rather than restated, so the name this daemon writes and the
+    /// name a reader matches cannot become two different strings.
+    /// </remarks>
+    private static readonly EventName BreachedName = EventName.Parse(BreachedEvent);
+    private static readonly EventName ClearedName = EventName.Parse(ClearedEvent);
+    private static readonly EventName ServerOomName = EventName.Parse(ServerOomEvent);
+
     /// <summary>
     /// Records one episode transition — an opening or a closing, whichever it is.
     /// </summary>
@@ -60,8 +71,28 @@ public sealed class MonitorJournal(IEventJournalWriter writer, ILogger<MonitorJo
     {
         bool closed = t.ClosedTs is not null;
 
-        Record(closed ? ClearedEvent : BreachedEvent, w => WritePayload(w, t, closed));
+        Record(
+            closed ? ClearedName : BreachedName,
+            w => WritePayload(w, t, closed),
+            // The band the episode reached IS how much it matters, and this daemon is the only thing
+            // that measured it — so it says so rather than leaving a reader to infer weight from the
+            // fact that a row exists. A close is routine whatever band it reached: the value came back.
+            severity: closed ? EventSeverity.Info : BandSeverity(t.Band),
+            // A breach reports a reading, not an operation, so it neither succeeded nor failed. A close
+            // is the condition ending, which is the good result.
+            outcome: closed ? EventOutcome.Success : EventOutcome.Neutral);
     }
+
+    /// <summary>
+    /// The band an episode reached, as a severity.
+    /// </summary>
+    /// <remarks>
+    /// The two vocabularies coincide today and this does not assume they always will. An unrecognised
+    /// band reads as <see cref="EventSeverity.Warn"/> rather than <see cref="EventSeverity.Info"/>:
+    /// an episode exists because something crossed a line, so the quiet reading is the wrong guess.
+    /// </remarks>
+    private static EventSeverity BandSeverity(string? band) =>
+        EventSeverities.TryParse(band, out EventSeverity severity) ? severity : EventSeverity.Warn;
 
     /// <summary>
     /// Records that the kernel killed a process in one server's cgroup for want of memory.
@@ -82,7 +113,7 @@ public sealed class MonitorJournal(IEventJournalWriter writer, ILogger<MonitorJo
     /// <param name="total">Kills this host has counted for this instance across every run.</param>
     /// <param name="memory">The reading the kill was counted in, so a reader has the state beside the fact.</param>
     public void RecordOom(string instance, long kills, long total, ServerMemory memory)
-        => Record(ServerOomEvent, w =>
+        => Record(ServerOomName, w =>
         {
             w.WriteString("Instance", instance);
             w.WriteNumber("Kills", kills);
@@ -93,7 +124,9 @@ public sealed class MonitorJournal(IEventJournalWriter writer, ILogger<MonitorJo
                 w.WriteNumber("PeakBytes", peak);
             if (memory.MaxEvents is { } max)
                 w.WriteNumber("MaxEvents", max);
-        });
+        },
+        severity: EventSeverity.Danger,
+        outcome: EventOutcome.Failure);
 
     /// <summary>Writes the payload both events share, plus the half that differs.</summary>
     private static void WritePayload(Utf8JsonWriter w, EpisodeTransition t, bool closed)

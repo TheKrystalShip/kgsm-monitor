@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — a threshold episode carries its own weight (`2.19.0`)
+
+A threshold episode says how much it matters on the envelope. The band it reached is the severity —
+this daemon is the only thing that measured it, so it states the weight rather than leaving a reader
+to infer one from the fact that a row exists. A close is `info` whatever band the episode reached,
+and carries a `success` outcome: the value came back.
+
+An OOM kill is `danger` and a `failure`. It is the one memory fact that is not an inference, and it
+now reads that way wherever it is rendered.
+
 ### Added — a range summary for a whole entity kind (`2.18.0`)
 
 `GET /metrics/history/summary?kind=…&range=…` returns one aggregate row per entity and metric — min,
