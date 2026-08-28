@@ -221,13 +221,13 @@ missing key). Below is a fully-annotated example with every field; types and uni
 | `fans[].rpm` | `int` | **RPM** | Always > 0 — a zero tachometer is omitted (§3.7). |
 | `fans[].name` | `string?` | — | The driver's label when it has one, else `Fan N`. |
 
-> **⚠ Unit trap — host CPU vs server CPU are different scales.** `cpu.totalPct` is
+> **Unit trap — host CPU vs server CPU are different scales.** `cpu.totalPct` is
 > **0–100 across all cores** (the whole host). `servers[].cpuPctCore` is **percent of one
 > core** (htop's per-process convention) and **can exceed 100** — a server pinning 3 cores
 > reads ~300. They are deliberately not the same unit. To put a server on a host-relative
 > 0–100 scale, divide by `cpu.perCore.length`.
 
-> **⚠ Memory includes cache, and `Kb` vs `bytes` differ by block.** `mem.*` is in
+> **Memory includes cache, and `Kb` vs `bytes` differ by block.** `mem.*` is in
 > **kibibytes**; `servers[].memBytes` is in **bytes**. `memBytes` for systemd/container
 > servers is cgroup `memory.current`, which **includes reclaimable page cache**, so it
 > reads higher than process RSS. For native servers it's summed RSS (and double-counts
@@ -400,14 +400,14 @@ consumer renders one less thing rather than an error.
 }
 ```
 
-⚠ **`smPct` is `null` for an idle process, and that is not `0`.** Utilisation comes from a windowed
+**`smPct` is `null` for an idle process, and that is not `0`.** Utilisation comes from a windowed
 sampler: a process that did no work in the window is absent from the driver's result entirely. A `0`
 means it *was* sampled and was idle. Both occur; do not collapse them.
 
-⚠ **Never sum `memTotalBytes` or `memUsedBytes` across devices.** Video memory does not pool. A total
+**Never sum `memTotalBytes` or `memUsedBytes` across devices.** Video memory does not pool. A total
 would imply a model could use it, and a model that does not fit on one card fails to load.
 
-⚠ **`processes` names processes with nothing to do with KGSM** — anything on the host using the card
+**`processes` names processes with nothing to do with KGSM** — anything on the host using the card
 for compute. A consumer serving viewers or any lower-privileged reader **projects this down**: name
 only the contexts resolving to a known unit, and fold the rest into one unnamed row that **keeps its
 memory figure**. Dropping those rows instead of aggregating them would leave the per-process figures
@@ -425,10 +425,10 @@ come from units it drives but does not own — the assistant spends no GPU in it
 `llama-server` holds gigabytes on its behalf. `units` always names where the figures came from, and a
 surface must render that rather than implying the leaf's own process.
 
-⚠ **A `backend` figure can be present while the leaf is stopped.** A socket-activated model outlives
+**A `backend` figure can be present while the leaf is stopped.** A socket-activated model outlives
 the service that asked for it. Do not read a leaf's `gpu` as its own footprint.
 
-⚠ **`gpu: null` on a leaf means it has no GPU context at all** — the ordinary case for most leaves.
+**`gpu: null` on a leaf means it has no GPU context at all** — the ordinary case for most leaves.
 Render no GPU section rather than an empty or zeroed one.
 
 For history, `kind=gpu` addresses a device **by its UUID**, serving `memUsedBytes`, `memTotalBytes`,

@@ -150,7 +150,7 @@ if (options.HistoryEnabled)
 // conditions on each frame. Needs both halves: something evaluating the rules, and somewhere to write.
 // Missing either, alerts still work off the live frame and nothing is recorded, which is said out loud
 // because "this host keeps no record of what fired" is found out at the worst moment otherwise.
-// This daemon's own event journal, registered whatever else is switched on. ⚠ Deliberately NOT
+// This daemon's own event journal, registered whatever else is switched on. Deliberately NOT
 // inside the threshold block below: what a leaf says about ITSELF cannot depend on a feature flag, and
 // a monitor with thresholds off would otherwise have no writer and report nothing about its own state
 // — while still being the component every surface on this host reads its metrics from.

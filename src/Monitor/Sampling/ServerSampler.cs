@@ -252,7 +252,7 @@ public sealed class ServerSampler(
         {
             logger.LogWarning(ex, "KGSM event listener init failed; falling back to resync-only");
 
-            // ⚠ Invisible in a frame. Sampling falls back to the periodic resync, so servers still
+            // Invisible in a frame. Sampling falls back to the periodic resync, so servers still
             // appear — just up to one resync interval late, which looks like nothing at all until
             // somebody wonders why a server they just started has no metrics yet. There is no retry,
             // so this degradation lasts the life of the process.

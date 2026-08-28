@@ -104,7 +104,7 @@ public sealed class MonitorJournal(IEventJournalWriter writer, ILogger<MonitorJo
     /// judgment about load, which is why it is announced the moment it is counted instead of waiting for
     /// something to accumulate enough evidence to conclude it.
     /// <para>
-    /// ⚠ Not the same as an exit code of 137. That is a SIGKILL from any source; this is the kernel's own
+    /// Not the same as an exit code of 137. That is a SIGKILL from any source; this is the kernel's own
     /// counter, in the cgroup it happened in.
     /// </para>
     /// </remarks>

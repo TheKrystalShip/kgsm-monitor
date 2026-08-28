@@ -23,12 +23,12 @@ namespace TheKrystalShip.KGSM.Monitor.History;
 /// <b>What it will not claim.</b> Time the daemon was down is not counted as uptime: the instance may
 /// well have been running, but nothing here saw it. A counter observed for the first time is adopted as
 /// a baseline rather than banked, because those events happened at a time this record cannot state.
-/// ⚠ And an instance that stops and starts again entirely between two ticks is one run boundary this
+/// And an instance that stops and starts again entirely between two ticks is one run boundary this
 /// misses — both of its signals (an absence, and the kernel's high-water mark going backwards) need the
 /// gap to be visible in a frame.
 /// </para>
 /// <para>
-/// ⚠ <b>A cgroup that dies inside one tick takes its counters with it.</b> They live in the cgroup and
+/// <b>A cgroup that dies inside one tick takes its counters with it.</b> They live in the cgroup and
 /// are gone the moment it is torn down, so an instance killed during boot — capped below what it
 /// allocates, spawned and dead in the same second — contributes nothing here. What is counted is the
 /// case that sizing turns on: a server that grows into its ceiling over hours. A server that cannot

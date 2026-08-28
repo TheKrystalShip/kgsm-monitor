@@ -152,7 +152,7 @@ These were read out of the KGSM repo / `kgsm-lib`, not assumed:
 - Therefore watch-list = **list + watch**: periodic `InstanceService.GetAll()` resync is truth; journal events are the low-latency delta. The resync also supplies the resolve inputs (kind, working-dir, compose-file).
 - **Engine-event history is the journal, and the monitor holds no copy of it.** The journal is the record — durable, engine-owned, pruned on age — and it is queried directly through kgsm-lib's `IEventJournalHistory`. The monitor reads events only as a resync signal, at the tail, storing none: audit history and resource metrics share nothing but a daemon, and coupling them meant a host without this leaf could not say what its own engine had done.
 
-## 7. Prerequisite — kgsm-lib AOT compliance ✅ DONE
+## 7. Prerequisite — kgsm-lib AOT compliance DONE
 `kgsm-lib` was converted to System.Text.Json source generation and marked
 `IsAotCompatible` (merged to `main`, commit `feat(json): source-generate JSON…`).
 Proven: 0 IL warnings, no test regressions, and a Native AOT consumer publishes
@@ -203,7 +203,7 @@ kgsm-monitor/
 > references it by project (so a shape change is a compile break here) and serializes
 > `GET /metrics` with its context; **kgsm-api consumes the same package and deserializes with
 > the same context** — the wire shape and naming cannot drift between producer and consumer.
-> ⚠ **Drift rule:** NuGet caches by `id+version`, so any contract change MUST bump the package
+> **Drift rule:** NuGet caches by `id+version`, so any contract change MUST bump the package
 > `Version` (and every consumer's `<PackageReference>`); a same-version repack is silently
 > served stale. Loop: edit → bump `Version` → `dotnet pack -c Release -o /home/heisen/local-nuget`.
 ```jsonc
@@ -236,7 +236,7 @@ kgsm-monitor/
 - [x] Config: interval, socket path, socket mode, iface/mount deny — all env vars (`MonitorOptions`)
 - [x] Install/deploy: `deploy/install.sh` + hardened unit written & validated (enable on host = user action)
 
-### Slice 2a — per-server via cgroups + embed kgsm-lib ✅ COMPLETE
+### Slice 2a — per-server via cgroups + embed kgsm-lib COMPLETE
 - [x] Add `kgsm-lib` ProjectReference (net9 lib in net10 AOT app) — builds 0-warning; AOT publish 0 ILC, 11 MB ELF, 0 `libcoreclr`
 - [x] Confirm cgroup v2 (`stat -fc %T /sys/fs/cgroup` → `cgroup2fs`) ✓. **Docker cgroup driver deferred** (Docker not running this session — container path built but unmeasured; stat-and-skip makes it safe)
 - [x] Periodic `InstanceService.GetAll()` resync = source of truth — own slow timer (`KGSM_MONITOR_RESYNC_MS`, default 15 s), off the metrics tick. **Proven live under AOT** (`server resync: 1 instance(s) known`)
@@ -245,13 +245,13 @@ kgsm-monitor/
 - [x] Extend snapshot: `servers: [{ id, name, kind, cpuPctCore, memBytes, ioReadBps?, ioWriteBps?, pids }]` (always present, empty when none)
 - [x] Wired DI conditionally (`KGSM_MONITOR_KGSM_PATH` set ⇒ per-server on; else host-only). 17 new golden/resolver tests (**40 total, green**); per-server cost measured **48 µs/server** (`bench/BASELINE.md` Slice 2 addendum)
 
-### Slice 2b — event-driven watch-list delta ✅ COMPLETE
+### Slice 2b — event-driven watch-list delta COMPLETE
 - [x] `EventService` bound to `monitoring.sock` (monitor owns the socket; KGSM connects via `socat`); `Initialize()` + handlers for `instance_started/stopped/removed/uninstalled`. **Design: event = *nudge*, not a partial delta** — the payload carries only `InstanceName` (+`LifecycleManager`), not the cgroup-resolution inputs (compose-file/pid-file/unit), so a true "add" needs a lookup anyway. Each handler instead signals an immediate authoritative `GetAll()` resync, which keeps `_watch` **single-writer** (lock-free volatile swap) and self-heals on the best-effort channel. Latency drops from "≤`ServerResyncMs`" to "sub-second"; the periodic resync stays the floor.
 - [x] Coalescing: `SemaphoreSlim(0,1)` + a single drain loop is the sole `_watch` writer; both the periodic floor and events feed `RequestResync()`. A burst (or event mid-resync) collapses to ≤1 extra resync (a pending `Release` throws `SemaphoreFullException` → swallowed = the coalesce). `EventsEnabled` (`KGSM_MONITOR_EVENTS`, default on) is the kill-switch → resync-only fallback.
 - [x] Tests: 4 new (**44 total, green**) — wiring (fake `IEventService` asserts the four handler types + `Initialize`), event→resync nudge, events-disabled, and a **real-socket integration** test (real `UnixSocketClient`+`EventService` on a temp socket; a hand-written KGSM envelope round-trips through `KgsmJsonContext` → resync). AOT publish still **0 ILC warnings**, 11 MB ELF, 0 `libcoreclr`. Live socket smoke proven (§11).
 - [ ] Re-measure container path + `SourceBenchmarks.Disk` once Docker + a running fleet are present
 
-### Slice 3 — standalone-native fallback ✅ COMPLETE
+### Slice 3 — standalone-native fallback COMPLETE
 - [x] `ProcTreeSampler`: `.pid` → root PID → invert `/proc/*/stat` `ppid` links → BFS the subtree → sum `utime+stime` (→ `cpuPctCore`), RSS (`statm` resident × page size), `/proc/[pid]/io` `read_bytes`/`write_bytes`. Emitted as `kind:"native"` alongside the cgroup servers (the two samplers cover disjoint sets, so `ServerSampler.Sample()` concatenates). Routed by the resolver's `Kind=="native"` **and** no live cgroup dir (Inc 4): a broken container isn't misrouted here, and a native whose `kgsm.slice/<inst>` cgroup exists is sampled by `CgroupSampler` instead — claiming it here too would double-count.
 - [x] **One gated global scan.** `ppid` lives only in `/proc/<pid>/stat`, so inverting the tree reads `stat` for *every* host process — cost scales with **host process count, not native-server count** (one scan serves all natives). Gated: skipped entirely when the watch-list has no native server. `statm`/`io` read for tree members only. `sysconf(_SC_CLK_TCK)` p/invoke (`[LibraryImport]`, AOT-clean; `AllowUnsafeBlocks` for the generated stub) with a `100` USER_HZ fallback so a wrong constant/failed call degrades correctly rather than fabricating CPU%.
 - [x] **PID-recycle guard:** the `.pid` file holds a kernel-reused number, so the root PID's `starttime` (stat field 22) is pinned at first observation; a changed `starttime` means the file now points at a foreign process → skip that tick + drop state → re-prime next tick (stat-and-skip parity with the cgroup path). `Instance` carries no runtime status (verified — pure config), so this structural guard, not a running-flag filter, is the mechanism.
@@ -292,7 +292,7 @@ kgsm-monitor/
 - **Full diagnostic frame = 1.61 ms** (398 KB alloc) → **0.16 % of the 1000 ms tick budget**; ceiling ~620 frames/s (~620× headroom at 1 Hz). Serialize (source-gen JSON) = **1.85 µs** — the scrape is effectively free.
 - **Disk = 96.9 % of the frame** (`DriveInfo.GetDrives()` statvfs + `/sys/block`); every other source 16–58 µs. Pure parse = 0.7 % → frame is **syscall-bound**, so this JIT baseline ≈ the AOT artifact within ~1 % (AOT toolchain run not needed yet).
 - Validity: frame ≈ Σ(sources) on both latency *and* allocation (397.98 KB ≈ 397.85 KB). Levers noted for pushing rate (read `/proc/self/mountinfo` + `statvfs` survivors instead of `DriveInfo` → kills scaling; decouple disk-usage cadence → ~50 µs frame; span-split to cut allocs).
-- ⚠️ **Caveat:** captured on an **idle host (24 mounts)**; Disk cost scales with mount count, which grows with containerized servers — so 1.61 ms is a clean-host floor. **Re-measure `SourceBenchmarks.Disk` in Slice 2** when containers are present. Even 5–10× is ~1 % of the tick, so viability holds; the per-server cgroup reads (~tens of µs each) still leave huge headroom.
+- **Caveat:** captured on an **idle host (24 mounts)**; Disk cost scales with mount count, which grows with containerized servers — so 1.61 ms is a clean-host floor. **Re-measure `SourceBenchmarks.Disk` in Slice 2** when containers are present. Even 5–10× is ~1 % of the tick, so viability holds; the per-server cgroup reads (~tens of µs each) still leave huge headroom.
 
 **2026-06-11 — Slice 2a per-server cgroups, embedded kgsm-lib, Native AOT, live:**
 - **Embed + AOT:** monitor (net10 AOT) references `kgsm-lib` (net9, `IsAotCompatible`). `dotnet publish -r linux-x64 -p:PublishAot=true` → **0 ILC warnings**, 11 MB native ELF (was 9.7 MB), **0 `libcoreclr` links**.

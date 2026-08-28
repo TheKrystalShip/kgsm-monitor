@@ -19,7 +19,7 @@ the live load-test self-cost of ~0.3 % of a core, which also includes scrape-ser
 Theoretical ceiling at the current cost: **~620 frames/sec** before the sampler can't keep up — i.e.
 **~620× headroom** at 1 Hz.
 
-> ⚠️ Captured on an **idle host (24 mounts)**. ~97 % of the frame is Disk, and that cost **scales with
+> Captured on an **idle host (24 mounts)**. ~97 % of the frame is Disk, and that cost **scales with
 > mount count** — which grows as containerized game servers come up. Treat 1.61 ms as a clean-host
 > *floor*, not a fixed property; re-measure under representative container load (see Judgment §3).
 
@@ -80,7 +80,7 @@ Total pure-parse ≈ **11.5 µs = 0.7 % of a frame.** The frame is **syscall-bou
 3. **Disk is the entire story (96.9 %) — and it _scales with mount count_.** `DriveInfo.GetDrives()`
    enumerates **every** mount and the code touches `d.IsReady`/`d.DriveFormat` (per-mount `statvfs`)
    on all of them *before* `IncludeMount` filters — so pseudo/overlay mounts still pay. This box was
-   **idle with 24 mounts → 1.56 ms**. ⚠️ **The production host runs containerized game servers, and each
+   **idle with 24 mounts → 1.56 ms**. **The production host runs containerized game servers, and each
    Docker container adds overlay/shm/secret mounts** — so this cost grows with the very workload the
    daemon exists to watch. The 1.61 ms frame is **workload-dependent, not a fixed property**;
    **re-measure `SourceBenchmarks.Disk` once containers are present (Slice 2).** Even a 5–10× blow-up is
@@ -133,7 +133,7 @@ Re-run after embedding `kgsm-lib` and wiring the per-server cgroup sampler. Same
   Even **100 servers keeps the frame under 1 %** of the budget. Disk (~1.57 ms) stays the single biggest
   cost until ~30 servers; beyond that, aggregate per-server sampling leads — but both are dwarfed by the
   920+ ms of idle headroom. Viability is not in question at any realistic fleet size.
-- ⚠️ **Caveats that still need a running fleet to close:** (1) this measures one *systemd* cgroup; the
+- **Caveats that still need a running fleet to close:** (1) this measures one *systemd* cgroup; the
   container path (`docker-<id>.scope`) is unmeasured (no Docker running). (2) `io.stat` is **absent** on
   these cgroups (`IOAccounting=no` default) so io rates are null — when enabled, add one more small read
   per server. (3) Cost is per *addressable* server; native-standalone instances (Slice 3) are skipped and

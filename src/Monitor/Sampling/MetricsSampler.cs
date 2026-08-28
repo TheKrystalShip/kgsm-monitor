@@ -85,7 +85,7 @@ public sealed class MetricsSampler(
                 {
                     logger.LogError(ex, "metrics sample failed; keeping previous frame");
 
-                    // ⚠ Keeping the previous frame is right — a gap would read as a host with no
+                    // Keeping the previous frame is right — a gap would read as a host with no
                     // metrics — but it means a monitor whose sampling has broken serves a plausible,
                     // frozen snapshot indefinitely. Nothing else on this host can tell.
                     lifecycle?.MarkDegraded(

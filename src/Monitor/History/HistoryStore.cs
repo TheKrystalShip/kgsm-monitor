@@ -66,7 +66,7 @@ public readonly record struct FootprintRow(
 /// left-prefix range reads). WAL + INCREMENTAL auto-vacuum (auto-vacuum set before the tables exist).
 /// <para>
 /// Two further tables hold what outlives a retention horizon: <c>threshold_episode</c> (what fired) and
-/// <c>footprint</c> (what each instance has been measured to hold). ⚠ Neither is touched by the prune
+/// <c>footprint</c> (what each instance has been measured to hold). Neither is touched by the prune
 /// paths, and a <c>footprint</c> row is removed only when the instance itself is gone.
 /// </para>
 /// </summary>
@@ -344,7 +344,7 @@ public sealed class HistoryStore : IDisposable
     /// instance and its accumulated footprint is exactly what a later comparison needs; what this
     /// removes is the id of an instance that has been uninstalled.
     /// <para>
-    /// ⚠ <b>An empty set deletes nothing.</b> The watch-list is empty both when every instance has been
+    /// <b>An empty set deletes nothing.</b> The watch-list is empty both when every instance has been
     /// removed and when the engine could not be reached to ask — and those must not look alike to a
     /// statement that drops rows. The first case costs some stale rows until an instance exists again;
     /// treating the second as authoritative would erase the record this feature is for.

@@ -53,7 +53,7 @@ public sealed record GpuMetrics(GpuDevice[] Devices, GpuProcess[] Processes);
 
 /// <summary>One GPU, and what it currently holds.</summary>
 /// <remarks>
-/// ⚠ Device memory is <b>never summed across devices</b> by any consumer. VRAM does not pool — a total
+/// Device memory is <b>never summed across devices</b> by any consumer. VRAM does not pool — a total
 /// would imply a model could use it, and a model that does not fit on one card simply fails to load.
 /// </remarks>
 /// <param name="Index">The NVML device index. Stable only within one boot; join on <paramref name="Uuid"/>.</param>
@@ -354,7 +354,7 @@ public sealed record ServerMetrics(
 /// <param name="PeakBytes">
 /// The kernel's own high-water mark for this cgroup (<c>memory.peak</c>). Immune to sampling gaps —
 /// a spike between two ticks is invisible to a sampled series and present here.
-/// ⚠ It is scoped to the cgroup, so it resets on every restart: this is a <em>per-run</em> maximum,
+/// It is scoped to the cgroup, so it resets on every restart: this is a <em>per-run</em> maximum,
 /// and accumulating one across runs is the reader's job.
 /// </param>
 /// <param name="OomKills">

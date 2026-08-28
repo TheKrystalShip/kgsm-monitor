@@ -302,7 +302,7 @@ internal sealed class CgroupSampler
     /// the workload was refused memory it asked for.
     /// </summary>
     /// <remarks>
-    /// ⚠ <c>oom_kill</c> is matched exactly, not by prefix: <c>oom_group_kill</c> is a different
+    /// <c>oom_kill</c> is matched exactly, not by prefix: <c>oom_group_kill</c> is a different
     /// counter for a different thing, and a <c>StartsWith</c> would fold one into the other.
     /// </remarks>
     internal static (long? OomKills, long? MaxEvents) ParseMemEvents(string content)

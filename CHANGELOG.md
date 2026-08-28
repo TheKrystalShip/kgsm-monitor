@@ -192,7 +192,7 @@ sampled from a `/proc` tree reports the working set alone — a high-water mark,
 stall are cgroup facts with no process-level equivalent, so they stay null rather than being
 approximated. `memAnonBytes`, `memPeakBytes` and `memStallPct` join the history series.
 
-⚠ **None of this is `memBytes`, and the difference is the point.** That figure is `memory.current`,
+**None of this is `memBytes`, and the difference is the point.** That figure is `memory.current`,
 which charges reclaimable page cache — measured here, 763 MiB (14.7%) of one live server's charge, most
 of it cache the kernel drops under any pressure at all. It is the honest thing to chart and the wrong
 thing to size against, because cache grows to fill whatever allowance it is given.
@@ -205,20 +205,20 @@ both. A row is dropped only when the instance itself is gone, and never on an em
 means "the engine did not answer" as often as it means "nothing is installed". Off with
 `Monitor__FootprintDisabled`.
 
-⚠ **An OOM kill is announced, not accumulated in silence.** `server_memory_oom` is written to this
+**An OOM kill is announced, not accumulated in silence.** `server_memory_oom` is written to this
 daemon's journal the moment the counter moves. It is the one memory fact that is not an inference — the
 kernel refused a server the memory it asked for, which bounds what that server needs from below rather
 than describing a sample — so it needs no window, no coverage and no judgment about load. It is not an
 exit code of 137, which is a SIGKILL from any source.
 
-⚠ **A cgroup that dies inside one sample interval takes its counters with it.** The counters live in
+**A cgroup that dies inside one sample interval takes its counters with it.** The counters live in
 the cgroup and are gone when it is torn down, so an OOM kill during boot — measured here: an instance
 capped below its heap, spawned and killed inside the same second — is never counted. What this reports
 is OOM kills in cgroups that survive at least one tick, which is the case that matters for sizing (a
 server growing into its cap over hours); a server that cannot start under its cap fails its start, and
 the watchdog reports that.
 
-⚠ **The record states what was observed, never what was inferred.** Time this daemon was down is not
+**The record states what was observed, never what was inferred.** Time this daemon was down is not
 counted as uptime. A counter read for the first time is adopted as a baseline rather than banked,
 because whatever it holds happened at a time the record cannot state. And an instance that stops and
 starts again entirely between two ticks is one run boundary this misses — both signals for it (an
@@ -238,15 +238,15 @@ units a leaf drives but does not own — the assistant is an HTTP client that sp
 `llama-server` holds several gigabytes on its behalf — and is declared by `gpuBackendUnits` in the
 leaf's config descriptor. `units` always names where the figures came from.
 
-⚠ **A backend outlives the leaf that drives it.** A socket-activated model stays resident after the
+**A backend outlives the leaf that drives it.** A socket-activated model stays resident after the
 service that asked for it has stopped, so a leaf's `backend` figures can be present while the leaf
 itself is not running. The attribution field is what keeps that from reading as the leaf's own footprint.
 
-⚠ **Utilisation is sampled over a window; memory is not.** A process that did no work in the window is
+**Utilisation is sampled over a window; memory is not.** A process that did no work in the window is
 absent from NVML's result, so `smPct` is `null` — loaded and idle, which a `0` would make
 indistinguishable from measured-and-idle. Memory is always a plain figure.
 
-⚠ **`gpu.processes` names processes that have nothing to do with KGSM.** Anything using the card for
+**`gpu.processes` names processes that have nothing to do with KGSM.** Anything using the card for
 compute appears there. A consumer serving lower-privileged readers projects it down rather than passing
 it through, keeping the aggregate's memory so the rows still sum to the device's figure.
 
@@ -255,13 +255,13 @@ it through, keeping the aggregate's memory so the rows still sum to the device's
 `HostGpuMemUsedPct` fans out one observation per device, keyed by UUID. Default `host-gpu-mem`:
 warn 93, danger 97, dwell 120/120, clear margin 3.
 
-⚠ The bands sit high because the measured quantity is the **device's** used figure, which exceeds the
+The bands sit high because the measured quantity is the **device's** used figure, which exceeds the
 sum of its processes — this host reads 88.1 % with its models resident while the processes account for
 84.8 %, the difference being driver and CUDA context overhead belonging to no pid. Both the warn line
 and the clear line (`warn − margin`) have to sit above that healthy steady state, or ordinary operation
 reads as a fault and a condition that opens can never close.
 
-⚠ Device memory neither swaps nor reclaims: a model that does not fit fails to load outright rather than
+Device memory neither swaps nor reclaims: a model that does not fit fails to load outright rather than
 running slowly. The danger band is the actionable one, and acting on it means freeing a backend — not
 restarting the leaf that reported it, which is not what holds the memory.
 
@@ -286,7 +286,7 @@ rewrite **detectable** — a reference carrying both finds the line by position 
 right one by id, where before a shifted offset resolved to a real, parseable event of the wrong kind
 with nothing to notice.
 
-⚠ Optional and optional forever: lines written before this are on disk for as long as retention holds
+Optional and optional forever: lines written before this are on disk for as long as retention holds
 them, and **absent means unknown, never a mismatch**. Authority: `journal-entry-id-plan.md`.
 
 ### Fixed — a first setup on a host where nothing is installed yet completes
@@ -303,7 +303,7 @@ plus one `manage-units` call on this project's own service — `start` when the 
 is not running). Both are dispatched as the same `manage-units` action, so a host without the grant is
 refused either way and the probe measures the grant rather than the unit.
 
-⚠ Measured in the positive direction only. The deploying user on the development host is in
+Measured in the positive direction only. The deploying user on the development host is in
 `wheel`, and two pre-existing polkit rules there grant that group every
 `org.freedesktop.systemd1.*` action outright, so no systemctl call by that user can be refused
 and the negative path cannot be exercised on it. That `try-restart` consults polkit before it
@@ -319,7 +319,7 @@ its group access, and warns when it does not. A directory cannot be entered with
 directory above it, so a state directory closed to the group hides the journal inside it however
 permissive the journal's own mode is.
 
-⚠ **That failure is silent.** A reader that cannot traverse in gets `Directory.Exists == false`, not a
+**That failure is silent.** A reader that cannot traverse in gets `Directory.Exists == false`, not a
 permission error — so discovery concludes this producer has recorded nothing, which is exactly what a
 genuinely idle leaf looks like. This unit declares `0750` and names the shared `kgsm` group, so the
 check stays quiet here; it exists for the leaf that ships `0700` and disappears.
@@ -329,7 +329,7 @@ check stays quiet here; it exists for the leaf that ships `0700` and disappears.
 ### Added — this producer prunes its own journal
 
 Segments older than **90 days** are removed, matching the engine's own retention window
-(`TheKrystalShip.KGSM.Journal` 1.4.0). ⚠ **Before this, only the engine pruned anything** — its daily
+(`TheKrystalShip.KGSM.Journal` 1.4.0). **Before this, only the engine pruned anything** — its daily
 timer covers its own directory alone, and every leaf journal grew without bound.
 
 Pruning runs at startup and again when the segment date rolls over, so a resident daemon prunes daily
@@ -344,7 +344,7 @@ which a restore or a backup tool moves without any event moving.
 ### Fixed — federation cannot be registered in the wrong order
 
 kgsm-lib 4.30.0 makes `AddKgsmServices` and `AddKgsmJournalFederation` register the same resolution
-rule, so either call order yields a federated reader. ⚠ **The bug it removes had no symptom**: a
+rule, so either call order yields a federated reader. **The bug it removes had no symptom**: a
 consumer that federated too early kept reading the engine's journal *successfully* — healthy journal,
 quiet host, nothing to catch — while every other producer's events sat in files it never opened.
 `JournalDiscovery` also scans once per process now, instead of once for the history reader and again
@@ -365,7 +365,7 @@ Three of those had drifted across the ecosystem, and two mattered here:
 - **`ProducerVersion` is the informational version.** This daemon stamped
   `Assembly.GetName().Version`, so its events carried `2.3.0.0` — a four-part form no release of it
   is ever numbered with, and not comparable with the semver every other producer's version is
-  eventually meant to be. Events written from now on carry `2.6.0`. ⚠ Lines already on disk keep the
+  eventually meant to be. Events written from now on carry `2.6.0`. Lines already on disk keep the
   old spelling; the field is free text, so nothing breaks, but a reader comparing across the change
   sees both.
 - **The journal directory no longer follows the metrics database.** It was derived from
@@ -498,7 +498,7 @@ alone. `AddKgsmJournalFederation` now runs after `AddKgsmServices` and every pro
 tailed. Nothing was broken by it — the resync floor re-derives the same watch-list — but the events
 exist to react sooner, and half of them were landing somewhere this daemon was not looking.
 
-⚠ The call must stay **after** `AddKgsmServices`: above it the single-journal registration wins,
+The call must stay **after** `AddKgsmServices`: above it the single-journal registration wins,
 silently. This daemon's own journal is discovered along with the rest, which costs nothing — the four
 handlers are keyed by payload type and a threshold episode matches none of them.
 
@@ -524,7 +524,7 @@ is now recorded where it happened, instead of another component polling it out o
   different question. Both carry `OpenedTs`, so a reader can place the breach without holding the pair.
 - **Raw values only** — no summary sentence, no severity, no formatted number. Those are a domain-aware
   reader's business, and putting one consumer's wording in the record would force it on every other.
-- ⚠ `CloseReason` travels on every close and must never be flattened into "recovered": a rule retuned,
+- `CloseReason` travels on every close and must never be flattened into "recovered": a rule retuned,
   disabled or removed closes an episode without the value ever being observed to come down.
 - The journal is written **before** the history database. A store failure then cannot leave a fact that
   happened unrecorded, which is the direction that matters.
@@ -547,7 +547,7 @@ is now recorded where it happened, instead of another component polling it out o
   swapped in, so a refused one leaves the running rules untouched and one that could not be written is never
   reported as applied. Only the rules whose terms actually changed lose their dwell clocks. An override lives
   at `Monitor__ThresholdPolicyPath`; deleting it (or `DELETE`) returns the host to the built-in defaults.
-  ⚠ This makes the metrics socket writable, which it previously was not. The boundary is unchanged — the
+  This makes the metrics socket writable, which it previously was not. The boundary is unchanged — the
   socket's filesystem permissions, which already govern reading every metric this host produces.
 - **Threshold evaluation** (`src/Monitor/Thresholds/`) — the daemon decides which metrics are over their
   line, at the sample cadence, and publishes the verdict on every frame. A breach must hold for the rule's

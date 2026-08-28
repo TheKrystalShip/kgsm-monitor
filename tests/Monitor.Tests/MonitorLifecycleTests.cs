@@ -12,7 +12,7 @@ namespace TheKrystalShip.KGSM.Monitor.Tests;
 /// What this daemon reports about its own state.
 /// </summary>
 /// <remarks>
-/// ⚠ Every one of these was a log line and nothing else. <c>/health</c> answers a literal <c>ok</c>, so
+/// Every one of these was a log line and nothing else. <c>/health</c> answers a literal <c>ok</c>, so
 /// a monitor serving a frozen frame, with no per-server network numbers and a dead event listener,
 /// reports itself operational to every surface on this host.
 /// </remarks>
@@ -56,7 +56,7 @@ public sealed class MonitorLifecycleTests
     [Fact]
     public void A_frozen_frame_is_reported_and_a_recovered_sample_clears_it()
     {
-        // ⚠ Keeping the previous frame on a failed sample is right — a gap would read as a host with no
+        // Keeping the previous frame on a failed sample is right — a gap would read as a host with no
         // metrics — but it means a broken monitor serves a plausible snapshot indefinitely.
         var recorder = new RecordingLifecycle();
 
