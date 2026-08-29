@@ -25,7 +25,7 @@ using TheKrystalShip.KGSM.LeafConfig;
 // Where this daemon's own configuration comes from, lowest precedence first — the same order
 // Program.cs resolves them in. The settings file is the base the other two override one key of.
 [assembly: LeafFloorSource("appsettings", "/opt/kgsm-monitor/kgsm-monitor.settings.json")]
-[assembly: LeafFloorSource("systemd-unit", "/etc/kgsm-monitor/systemd/kgsm-monitor.service")]
+[assembly: LeafFloorSource("systemd-unit", "kgsm-monitor.service")]
 [assembly: LeafFloorSource("env-file", "/etc/kgsm-monitor/kgsm-monitor.env")]
 
 // Per-category log filtering can name any category there is (Logging__LogLevel__Microsoft.AspNetCore
