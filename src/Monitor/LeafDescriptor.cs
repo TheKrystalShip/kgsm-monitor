@@ -1,4 +1,4 @@
-using TheKrystalShip.KGSM.LeafConfig;
+using TheKrystalShip.KGSM.ComponentConfig;
 
 // What the Control Panel shows about this daemon, declared beside the configuration it describes.
 // tools/LeafDescriptorGen reads this out of the built assembly and writes deploy/kgsm-monitor.leaf.json;
@@ -13,32 +13,32 @@ using TheKrystalShip.KGSM.LeafConfig;
 
 // Panel sections, in the order they render. Fields land in one by naming its id, and follow the order
 // they are declared in MonitorSettings — so the page's layout is readable straight off the type.
-[assembly: LeafGroup("general", "General", 1)]
-[assembly: LeafGroup("sampling", "Sampling", 2)]
-[assembly: LeafGroup("sockets", "Sockets", 3)]
-[assembly: LeafGroup("servers", "Per-server metrics", 4)]
-[assembly: LeafGroup("leaves", "Per-leaf metrics", 5)]
-[assembly: LeafGroup("history", "Metrics history", 6)]
-[assembly: LeafGroup("events", "Event history", 7)]
-[assembly: LeafGroup("thresholds", "Thresholds", 8)]
+[assembly: ConfigGroup("general", "General", 1)]
+[assembly: ConfigGroup("sampling", "Sampling", 2)]
+[assembly: ConfigGroup("sockets", "Sockets", 3)]
+[assembly: ConfigGroup("servers", "Per-server metrics", 4)]
+[assembly: ConfigGroup("leaves", "Per-leaf metrics", 5)]
+[assembly: ConfigGroup("history", "Metrics history", 6)]
+[assembly: ConfigGroup("events", "Event history", 7)]
+[assembly: ConfigGroup("thresholds", "Thresholds", 8)]
 
 // Where this daemon's own configuration comes from, lowest precedence first — the same order
 // Program.cs resolves them in. The settings file is the base the other two override one key of.
-[assembly: LeafFloorSource("appsettings", "/opt/kgsm-monitor/kgsm-monitor.settings.json")]
-[assembly: LeafFloorSource("systemd-unit", "kgsm-monitor.service")]
-[assembly: LeafFloorSource("env-file", "/etc/kgsm-monitor/kgsm-monitor.env")]
+[assembly: ConfigFloorSource("appsettings", "/opt/kgsm-monitor/kgsm-monitor.settings.json")]
+[assembly: ConfigFloorSource("systemd-unit", "kgsm-monitor.service")]
+[assembly: ConfigFloorSource("env-file", "/etc/kgsm-monitor/kgsm-monitor.env")]
 
 // Per-category log filtering can name any category there is (Logging__LogLevel__Microsoft.AspNetCore
 // and anything else a category name can spell), so the namespace cannot be enumerated. Every other
 // key in the settings file has to be described or the build fails.
-[assembly: LeafFrameworkNamespace("Logging__",
+[assembly: ConfigFrameworkNamespace("Logging__",
     "per-category filtering is open-ended: any category name is a valid key")]
 
 // The ecosystem logging level. It has no MonitorSettings property because
 // Microsoft.Extensions.Logging owns it, so it is the one key nothing in this daemon's own types can
 // be read to discover.
-[assembly: LeafFrameworkField("logLevel", "Logging__LogLevel__Default", "Log level",
+[assembly: ConfigFrameworkField("logLevel", "Logging__LogLevel__Default", "Log level",
     Description = "Minimum severity this leaf logs.",
     Group = "general",
-    Type = LeafType.Enum,
+    Type = ConfigType.Enum,
     Values = ["Trace", "Debug", "Information", "Warning", "Error", "Critical"])]

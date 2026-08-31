@@ -70,14 +70,14 @@ per-server network meter has its own one-time `deploy/net-meter-setup.sh`.
 `/var/lib/kgsm/leaves/monitor.json`, unprivileged, before the binary swap. It declares every
 `Monitor__*` knob so the Control Panel can render and edit them; the daemon never reads it.
 
-**That file is generated, not written.** `TheKrystalShip.KGSM.LeafConfig` (the `kgsm-leafconfig`
-repo, consumed as a build-only `PackageReference`) reads the `[LeafField]` attributes and `<panel>`
+**That file is generated, not written.** `TheKrystalShip.KGSM.ComponentConfig` (the `kgsm-componentconfig`
+repo, consumed as a build-only `PackageReference`) reads the `[ConfigField]` attributes and `<panel>`
 doc tags off `MonitorSettings` in the built assembly and rewrites it on every build — so **edit the
 settings class, not the JSON**, and commit what the build produces. It also validates: a settings key
 no field describes, a described key the settings file does not declare, an undocumented field, a bad
 group or `dependsOn` reference all fail the build naming the key. `Monitor.csproj` configures it with
 two properties, `LeafSettingsFile` and `LeafDescriptorFile`. Format and rules:
-`tks/leaf-config-descriptor.md`; the mechanism: `kgsm-leafconfig/README.md`.
+`tks/leaf-config-descriptor.md`; the mechanism: `kgsm-componentconfig/README.md`.
 
 **Describing the daemon costs it no reflection and no dependency.** The attributes are compiled in as
 source, the generator reads the assembly's metadata in its own process, and the package declares no
@@ -127,7 +127,7 @@ change both. Setup is privileged + one-time (sudo); until then these fields read
   the config-binding source generator (on by default under `PublishAot`, so `Get<T>()` costs no
   reflection); JSON goes through the source-generated `MonitorJsonContext`. A new serialized type
   must be registered there or it throws at runtime — the AOT publish (above) is how you catch it.
-- **A knob lives in two places**: a `MonitorSettings` property carrying `[LeafField]` and a
+- **A knob lives in two places**: a `MonitorSettings` property carrying `[ConfigField]` and a
   `<panel>` doc tag, and a key in `kgsm-monitor.settings.json`. The descriptor is generated from the
   first and the defaults from the second, so there is no third place to keep in step. Miss either
   and the build fails naming the key — a property with no key has an invisible default, a key with

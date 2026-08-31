@@ -12,7 +12,7 @@
 
 pkgbase=kgsm-monitor
 pkgname=('kgsm-monitor' 'kgsm-monitor-net-meter')
-pkgver=2.20.0
+pkgver=2.20.2
 pkgrel=1
 arch=('x86_64')
 url="https://github.com/TheKrystalShip/kgsm-monitor"
