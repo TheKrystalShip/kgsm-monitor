@@ -13,7 +13,7 @@
 
     <RootNamespace>TheKrystalShip.KGSM.Monitor</RootNamespace>
     <AssemblyName>kgsm-monitor</AssemblyName>
-    <Version>2.20.2</Version>
+    <Version>2.21.0</Version>
 
     <!-- Required by the source-generated [LibraryImport] sysconf(_SC_CLK_TCK) p/invoke in
          ProcTreeSampler (Slice 3). The generated marshalling stub uses unsafe; no hand-written
@@ -68,6 +68,8 @@
          daemon never reads the attributes — the generator reads them back out of this assembly's
          metadata, in its own process. PrivateAssets stops any of it flowing to Monitor.Tests. -->
     <PackageReference Include="TheKrystalShip.KGSM.ComponentConfig" Version="3.0.0" PrivateAssets="all" />
+    <PackageReference Include="TheKrystalShip.KGSM.ComponentSurface" Version="1.0.0-dev.5" />
+    <PackageReference Include="TheKrystalShip.KGSM.ComponentSurface.Http" Version="1.0.0-dev.2" />
   </ItemGroup>
 
   <ItemGroup>

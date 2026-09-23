@@ -22,6 +22,12 @@ public sealed class MonitorOptions
     /// the deployed unit and a co-located API connects to the same default.</summary>
     public string SocketPath { get; init; } = "/run/kgsm-monitor/metrics.sock";
 
+    /// <summary>Unix socket this daemon serves its own surface on.</summary>
+    public string SurfaceSocketPath { get; init; } = "/run/kgsm-monitor/surface.sock";
+
+    /// <summary>Where a configuration change made through the Control Panel is written.</summary>
+    public string ConfigOverridePath { get; init; } = "/var/lib/kgsm-api/leaf-overrides/monitor.env";
+
     /// <summary>
     /// Permission bits applied to the socket once it exists. Default <c>0660</c> — owner+group
     /// read/write, so an API process in the socket's group can scrape it without exposing it
@@ -196,6 +202,8 @@ public sealed class MonitorOptions
         {
             IntervalMs = Floor(s.IntervalMs ?? defaults.IntervalMs, MonitorSettings.Floors.IntervalMs),
             SocketPath = Or(s.SocketPath, defaults.SocketPath),
+            SurfaceSocketPath = Or(s.SurfaceSocketPath, defaults.SurfaceSocketPath),
+            ConfigOverridePath = Or(s.ConfigOverridePath, defaults.ConfigOverridePath),
             SocketMode = ParseMode(s.SocketMode, defaults.SocketMode),
             MountFsDeny = new HashSet<string>(SplitCsv(s.MountFsDeny), StringComparer.Ordinal),
             IfaceDenyPrefixes = SplitCsv(s.IfaceDenyPrefixes) is { Length: > 0 } iface

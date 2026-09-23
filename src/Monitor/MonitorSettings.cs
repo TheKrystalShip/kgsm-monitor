@@ -78,6 +78,24 @@ public sealed class MonitorSettings
     [ConfigField("socketMode", "Metrics socket permissions", Group = "sockets", Risk = ConfigRisk.Wiring)]
     public string SocketMode { get; set; } = "660";
 
+    /// <summary>Unix socket this daemon answers for ITSELF on — its configuration, its unit, its
+    /// journal and the commands it declares. Lives in the same per-service runtime dir, so the node's
+    /// API finds it from this component's id alone and needs no setting of its own.</summary>
+    /// <panel>Unix socket the Control Panel reaches this service's own configuration and journal
+    /// through. Moving it makes the panel read this service's settings off disk instead, which still
+    /// works and cannot apply a change while the service is up.</panel>
+    [ConfigField("surfaceSocketPath", "Own-surface socket", Group = "sockets", Type = ConfigType.Path,
+        Risk = ConfigRisk.Wiring)]
+    public string SurfaceSocketPath { get; set; } = "/run/kgsm-monitor/surface.sock";
+
+    /// <summary>The env file a configuration change made through the panel is written to.</summary>
+    /// <panel>Where a setting changed in the Control Panel is written. It has to be a file this
+    /// service's unit loads with EnvironmentFile= — the panel checks, and reports the settings as
+    /// read-only rather than writing a change nothing would read.</panel>
+    [ConfigField("configOverridePath", "Override file", Group = "sockets", Type = ConfigType.Path,
+        Risk = ConfigRisk.Wiring)]
+    public string ConfigOverridePath { get; set; } = "/var/lib/kgsm-api/leaf-overrides/monitor.env";
+
     /// <summary>Extra filesystem types to hide from the mount list, on top of the always-filtered
     /// pseudo filesystems. Comma-separated.</summary>
     /// <panel>Extra filesystem types to leave out of the mount list, on top of the pseudo filesystems

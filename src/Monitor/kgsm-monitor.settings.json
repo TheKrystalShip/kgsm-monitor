@@ -3,6 +3,8 @@
     "IntervalMs": 1000,
     "SocketPath": "/run/kgsm-monitor/metrics.sock",
     "SocketMode": "660",
+    "SurfaceSocketPath": "/run/kgsm-monitor/surface.sock",
+    "ConfigOverridePath": "/var/lib/kgsm-api/leaf-overrides/monitor.env",
     "MountFsDeny": "",
     "IfaceDenyPrefixes": "veth",
     "KgsmPath": "",

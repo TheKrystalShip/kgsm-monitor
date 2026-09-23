@@ -6,6 +6,8 @@ using TheKrystalShip.KGSM.Monitor.History;
 using TheKrystalShip.KGSM.Monitor.Sampling;
 using TheKrystalShip.KGSM.Monitor.Thresholds;
 using TheKrystalShip.KGSM.Core.Interfaces;
+using TheKrystalShip.KGSM.ComponentSurface;
+using TheKrystalShip.KGSM.ComponentSurface.Http;
 using TheKrystalShip.KGSM.Lifecycle;
 
 // Stamped before anything else runs, so uptime is this process's rather than the endpoint's first
@@ -13,6 +15,9 @@ using TheKrystalShip.KGSM.Lifecycle;
 DateTimeOffset startedAt = DateTimeOffset.UtcNow;
 
 var builder = WebApplication.CreateSlimBuilder(args);
+
+// The id this component is described and addressed under, everywhere in the ecosystem.
+const string ComponentId = "monitor";
 
 // Load the daemon's settings file from beside the binary. Two reasons it must be explicit (same as
 // kgsm-watchdog):
@@ -199,7 +204,26 @@ builder.WebHost.ConfigureKestrel(kestrel =>
     if (File.Exists(options.SocketPath))
         File.Delete(options.SocketPath);
     kestrel.ListenUnixSocket(options.SocketPath);
+
+    // What this daemon answers about ITSELF, on a socket of its own. A component owns its
+    // configuration, its unit and its journal wherever it runs and only the transport differs; this
+    // is a leaf, so the node's API relays over this socket rather than reading the descriptor for it.
+    //
+    // Its own socket rather than the scrape one above so the API can find it from this component's id
+    // alone — every leaf's unit already provisions /run/kgsm-<id>/ — and so that the file's presence
+    // is the whole of what says this leaf answers for itself.
+    if (File.Exists(options.SurfaceSocketPath))
+        File.Delete(options.SurfaceSocketPath);
+    kestrel.ListenUnixSocket(options.SurfaceSocketPath);
 });
+
+// The descriptor this build generated, the host's deploy floors beneath it, the overrides in force,
+// this unit's journal, and the bounce that makes a change take effect. All of it is the shared
+// component library, which is also what the generator that writes the descriptor lives beside.
+builder.Services.AddComponentSurface(new ComponentSurfaceOptions(
+    ComponentSurfacePaths.Descriptor(ComponentId),
+    options.ConfigOverridePath,
+    ComponentSurfacePaths.Commands(ComponentId)));
 
 var app = builder.Build();
 
@@ -212,6 +236,8 @@ app.Lifetime.ApplicationStarted.Register(() =>
     {
         if (OperatingSystem.IsLinux() && File.Exists(options.SocketPath))
             File.SetUnixFileMode(options.SocketPath, options.SocketMode);
+        if (OperatingSystem.IsLinux() && File.Exists(options.SurfaceSocketPath))
+            File.SetUnixFileMode(options.SurfaceSocketPath, options.SocketMode);
     }
     catch (Exception ex)
     {
@@ -223,6 +249,12 @@ app.Lifetime.ApplicationStarted.Register(() =>
 // to serve (an empty/warming snapshot is still "available" — the no-fresh-frame state lives
 // on /metrics 503, never here). Any non-200/no-answer ⇒ unavailable. Renamed from /healthz.
 app.MapGet("/health", () => Results.Text("ok\n"));
+
+// What this daemon answers about itself, at the routes every component serves them at. No gate: the
+// sockets' filesystem permissions are the boundary. Kestrel maps every route on every listener, so the
+// scrape socket answers these too — both carry the same mode, so neither admits anybody the other
+// refuses.
+app.MapGroup("/component").MapComponentSurface();
 
 // Consumer-agnostic scrape: return the latest precomputed frame (conflated). 503
 // until the first tick lands.
