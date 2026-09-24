@@ -107,6 +107,19 @@ setup_project_extras() {
     $SUDO install -m 0644 -o root -g root \
         "${REPO_DIR}/deploy/${NET_METER_UNIT}" "${SYSTEMD_DIR}/${NET_METER_UNIT}"
 
+    # The pinned map is chowned to whoever runs the monitor, which the script otherwise takes to be the
+    # packaged service account. A host deploying from a checkout runs the monitor as the deploy user, so
+    # that is stated beside the unit rather than left to a default that names somebody else.
+    local dropin="${SYSTEMD_DIR}/${NET_METER_UNIT}.d/50-monitor-user.conf" rendered
+    rendered="$(mktemp)"
+    printf '# Written by kgsm-monitor deploy/setup.sh: the user the monitor runs as, who reads the map.\n[Service]\nEnvironment=KGSM_MONITOR_USER=%s\n' \
+        "$DEPLOY_USER" > "$rendered"
+    if ! $SUDO cmp -s "$rendered" "$dropin" 2>/dev/null; then
+        log "the monitor runs as ${DEPLOY_USER} → ${dropin}"
+        $SUDO install -D -m 0644 -o root -g root "$rendered" "$dropin"
+    fi
+    rm -f "$rendered"
+
     $SUDO systemctl daemon-reload
     log "enabling + starting ${NET_METER_UNIT}"
     $SUDO systemctl enable --now "$NET_METER_UNIT"

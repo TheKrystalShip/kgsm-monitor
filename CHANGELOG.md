@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — setup.sh states who runs the monitor to the net meter (2.21.1)
+
+`deploy/setup.sh` writes `kgsm-net-meter.service.d/50-monitor-user.conf` with `KGSM_MONITOR_USER` set to
+the deploy user, so the pinned map is readable by the monitor a checkout deploy runs as. A package keeps
+the script's default, the `kgsm` service account.
+
 ### Added — the monitor answers for its own surface on a socket of its own (2.21.0)
 
 `/run/kgsm-monitor/surface.sock` serves `TheKrystalShip.KGSM.ComponentSurface.Http`'s routes under
