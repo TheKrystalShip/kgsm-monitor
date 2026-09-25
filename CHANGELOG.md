@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a boolean this component's settings file sets reads as on (2.21.2)
+
+`ComponentSurface` 1.0.0-dev.6 spells a settings file's JSON booleans `true`/`false` rather than
+`True`/`False`. A surface decides which provenance tier a value came from, and whether a switch is on,
+by comparing those strings — so a floor of `True` against a coded default of `true` drew a switch this
+component has enabled as off, and named the wrong tier as its source.
+
 ### Changed — setup.sh states who runs the monitor to the net meter (2.21.1)
 
 `deploy/setup.sh` writes `kgsm-net-meter.service.d/50-monitor-user.conf` with `KGSM_MONITOR_USER` set to
