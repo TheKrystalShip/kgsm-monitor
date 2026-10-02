@@ -68,7 +68,10 @@ per-server network meter has its own one-time `deploy/net-meter-setup.sh`.
 
 `deploy.sh` also installs **`deploy/kgsm-monitor.leaf.json`** — the leaf config descriptor — into
 `/var/lib/kgsm/leaves/monitor.json`, unprivileged, before the binary swap. It declares every
-`Monitor__*` knob so the Control Panel can render and edit them; the daemon never reads it.
+`Monitor__*` knob so the Control Panel can render and edit them; the daemon never reads it. Beside it
+the same build writes `deploy/kgsm-monitor.leaf.actions.json` — the actions a person needs to read this
+machine's measurements and its thresholds (`src/Monitor/ActionDeclarations.cs`), which kgsm-api checks
+before relaying — and `deploy.sh` installs it into `/var/lib/kgsm/leaves/actions/monitor.json`.
 
 **That file is generated, not written.** `TheKrystalShip.KGSM.ComponentConfig` (the `kgsm-componentconfig`
 repo, consumed as a build-only `PackageReference`) reads the `[ConfigField]` attributes and `<panel>`

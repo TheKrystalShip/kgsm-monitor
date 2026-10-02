@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — the monitor declares the actions a person needs to read it (2.22.0)
+
+`monitor:metrics.read`, `monitor:thresholds.read` and `monitor:thresholds.write`, beside the standard
+configuration, journal and lifecycle actions, in `deploy/kgsm-monitor.leaf.actions.json`, which the
+deploy and the package install into `/var/lib/kgsm/leaves/actions/monitor.json`. They are what kgsm-api
+checks before relaying, and declaring them is what puts them in the cluster's catalog, where a role can
+hold them. Builds with `TheKrystalShip.KGSM.ComponentConfig` 3.2.0-dev.2.
+
 ### Fixed — a setting whose source this component could not read reports as unknown (2.21.3)
 
 `ComponentSurface` 1.0.0-dev.8 carries whether every declared floor source was actually read, and reads

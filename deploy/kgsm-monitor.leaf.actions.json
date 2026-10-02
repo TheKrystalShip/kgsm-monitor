@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "component": "monitor",
+  "version": "2.22.0",
+  "actions": [
+    {
+      "id": "config.read",
+      "title": "Read Monitor settings",
+      "effect": "read",
+      "scope": "node"
+    },
+    {
+      "id": "config.write",
+      "title": "Change Monitor settings",
+      "effect": "write",
+      "scope": "node"
+    },
+    {
+      "id": "journal.read",
+      "title": "Read Monitor logs",
+      "effect": "read",
+      "scope": "node"
+    },
+    {
+      "id": "lifecycle.restart",
+      "title": "Restart Monitor",
+      "effect": "execute",
+      "scope": "node"
+    },
+    {
+      "id": "metrics.read",
+      "title": "See this machine's measurements and their history",
+      "effect": "read",
+      "scope": "node"
+    },
+    {
+      "id": "thresholds.read",
+      "title": "See what this machine alerts on",
+      "effect": "read",
+      "scope": "node"
+    },
+    {
+      "id": "thresholds.write",
+      "title": "Change what this machine alerts on",
+      "effect": "write",
+      "scope": "node"
+    }
+  ],
+  "requires": []
+}
