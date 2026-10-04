@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "component": "monitor",
-  "version": "2.22.0",
+  "version": "2.22.1",
   "actions": [
     {
       "id": "config.read",

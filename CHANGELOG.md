@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — built on released packages (2.22.1)
+
+Builds with `TheKrystalShip.KGSM.ComponentConfig` 3.2.0 and serves its surface with
+`ComponentSurface` and `ComponentSurface.Http` 1.0.0. No behaviour changes.
+
 ### Added — the monitor declares the actions a person needs to read it (2.22.0)
 
 `monitor:metrics.read`, `monitor:thresholds.read` and `monitor:thresholds.write`, beside the standard
