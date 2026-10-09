@@ -89,7 +89,7 @@ public class LeafSamplingTests : IDisposable
         // How a leaf claims GPU spent in a process it does not own: the assistant drives llama-server,
         // whose video memory is the assistant's cost even though the pid belongs to another unit.
         WriteDescriptor("assistant.json", """
-            {"id":"assistant","unit":"kgsm-assistant-service.service",
+            {"id":"assistant","unit":"kgsm-assistant.service",
              "gpuBackendUnits":["kgsm-llama-chat.service","kgsm-llama-embed.service"]}
             """);
 
