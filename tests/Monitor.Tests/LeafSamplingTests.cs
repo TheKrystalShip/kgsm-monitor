@@ -116,7 +116,7 @@ public class LeafSamplingTests : IDisposable
 
     [Theory]
     [InlineData("0::/system.slice/kgsm-llama-chat.service", "kgsm-llama-chat.service")]
-    [InlineData("0::/system.slice/kgsm-speech.service", "kgsm-speech.service")]
+    [InlineData("0::/system.slice/tks-speech.service", "tks-speech.service")]
     [InlineData("0::/kgsm.slice/kgsm-factorio.scope", "kgsm-factorio.scope")]
     [InlineData("0::/user.slice/user-1000.slice/session-2.scope", "session-2.scope")]
     [InlineData("0::/", null)]
