@@ -53,7 +53,7 @@ LEAF_DESCRIPTOR="${REPO_DIR}/deploy/${PROJECT}.leaf.json"
 
 # The leaf id kgsm-api knows this project by — the descriptor's "id", its filename stem in the
 # discovery dir, and the {leaf} segment of the API's config route. Usually the project name minus
-# the kgsm- prefix, but NOT always: kgsm-llm ships the leaf "assistant". State it, don't derive it.
+# the kgsm- prefix; a project whose leaf id differs from that sets it explicitly.
 LEAF_ID="${PROJECT#kgsm-}"
 
 render_unit() {   # $1 = unit filename
