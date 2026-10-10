@@ -1,29 +1,14 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+`kgsm-monitor` is a leaf: a Native-AOT daemon that samples host and per-game-server metrics straight from
+the kernel (`/proc`, `/sys`, cgroup v2; never `top` or `ps`), serves the latest frame on a unix-socket
+`GET /metrics`, and keeps a SQLite history served at `GET /metrics/history` (`src/Monitor/History/`).
+Role, contracts and peers: `../kgsm-docs/components/kgsm-monitor.md`; model:
+`../kgsm-docs/systems/operations/metrics.md`.
 
-`kgsm-monitor` is one leaf of the `tks`/KGSM ecosystem. The umbrella `../CLAUDE.md` (loaded
-in this repo) owns the cross-cutting invariants — read it for the dependency spine, the
-never-fabricate-a-metric rule, the kgsm-lib chokepoint, and the SystemdConsole logging
-convention. This file covers only what is specific to the monitor; where an ecosystem rule
-has a monitor-specific manifestation, it's called out below.
-
-## What this is
-
-A Native-AOT daemon that samples **host + per-game-server** metrics straight from the Linux
-kernel (`/proc`, `/sys`, cgroup v2 — never shelling `top`/`ps`), holds the latest frame in
-memory, and serves it over a **unix-socket `GET /metrics`** (HTTP/1.1, unauthenticated,
-pull-only). It is also the **single source of truth for metrics history**: a persist loop
-writes the latest frame to a SQLite store (raw + rollup tiers) and `GET /metrics/history`
-serves windowed queries (see `src/Monitor/History/`; kgsm-api relays this endpoint verbatim).
-
-It reads **every producer's events** but stores none: the journals tell `ServerSampler` when the
-instance list has changed, and that is the whole of its interest in them. Audit history is read from
-those journals through kgsm-lib (`IEventJournalHistory`), by whoever wants it. Authoritative docs:
-
-- **`PLAN.md`** — full design and decisions.
-- **`docs/integration.md`** — the consumer contract (what kgsm-api / any scraper must handle).
-- Wire shape lives in **`src/Monitor.Contracts/Snapshot.cs`**.
+Repo docs: `PLAN.md` (design), `docs/integration.md` (consumer contract), `docs/internals.md` (samplers,
+server kinds, eBPF meter, journals), `bench/BASELINE.md`. The wire shape is
+`src/Monitor.Contracts/Snapshot.cs`.
 
 ## Commands
 
@@ -32,188 +17,73 @@ dotnet build                       # JIT build (kgsm-monitor.slnx)
 dotnet test                        # golden-file suite
 dotnet test --filter "FullyQualifiedName~CpuSourceTests"   # one class/test
 
-# AOT publish — this IS the lint gate. Expect 0 IL2026 / IL3050 / ILC warnings.
+# AOT publish: this is the lint gate. Expect 0 IL2026 / IL3050 / ILC warnings.
 dotnet publish src/Monitor/Monitor.csproj -c Release -r linux-x64 -o artifacts/publish
 
-# Run against a dev socket (no root / /run needed)
+# Run against a dev socket (no root, no /run needed)
 Monitor__SocketPath=/tmp/kgsm-monitor.sock ./artifacts/publish/kgsm-monitor &
 curl --unix-socket /tmp/kgsm-monitor.sock http://localhost/metrics | jq
 
-dotnet run -c Release --project bench/Monitor.Benchmarks -- --filter '*'   # perf (see bench/BASELINE.md)
-./deploy/setup.sh                  # ONCE per host — asks for sudo; provisions the headless deploy grant
-./deploy/deploy.sh                 # build + install AOT binary to /opt + systemd unit (no sudo, no prompts)
+dotnet run -c Release --project bench/Monitor.Benchmarks -- --filter '*'   # perf (bench/BASELINE.md)
+./deploy/setup.sh                  # once per host; asks for sudo, provisions the headless deploy grant
+./deploy/deploy.sh                 # build + install the AOT binary and unit (no sudo, no prompts)
 ```
 
-Bash under `deploy/` and `src/Monitor/bpf/` follows the ecosystem `shellcheck`-clean convention.
+Bash under `deploy/` and `src/Monitor/bpf/` is shellcheck-clean.
 
 ## Deploying
 
-`deploy/setup.sh` runs **once per host** and is the only part that asks for sudo: it chowns
-`/opt/kgsm-monitor` to you, puts the real unit in **user-owned** `/etc/kgsm-monitor/systemd/` with
-`/etc/systemd/system/kgsm-monitor.service` symlinked to it, installs a polkit rule scoped to this
-project's units, enables the unit, then verifies the grant by making the same unprivileged
-`systemctl` calls the deploy will. It is idempotent — re-run it after changing what the host needs.
+`deploy.sh` is headless; if another operation seems to need root, stop and ask rather than adding `sudo`.
+The one privileged piece is the eBPF per-server network meter, with its own one-time
+`deploy/net-meter-setup.sh`. Mechanism: the `deploying` skill.
 
-`deploy/deploy.sh` is then **fully headless: no sudo, no prompts.** The prefix is yours so
-installing the AOT binary is a plain file write, a changed unit is a plain file write into the
-user-owned directory, and every `systemctl` verb goes through the polkit grant. It refuses
-**before building**, with *"run `deploy/setup.sh`"*, on an unprovisioned host. `deploy-common.sh`
-holds the paths/units/helpers both scripts share; the three files are self-contained, so a
-standalone clone deploys with no other repo checked out. Every `kgsm-*` repo carries this same
-pattern.
+`deploy/kgsm-monitor.leaf.json` (the leaf config descriptor) and `deploy/kgsm-monitor.leaf.actions.json`
+(from `src/Monitor/ActionDeclarations.cs`) are generated by `TheKrystalShip.KGSM.ComponentConfig` on every
+build, and `deploy.sh` installs them into `/var/lib/kgsm/leaves/` and `leaves/actions/`. Edit
+`MonitorSettings`, never the JSON, and commit what the build produces. Generation adds no reflection and no
+dependency to the AOT publish. Format: `../kgsm-docs/reference/leaf-config-descriptor.md`; mechanism:
+`../kgsm-componentconfig/README.md`.
 
-If some *other* operation seems to need root, stop and ask — don't reintroduce `sudo` into
-`deploy.sh`. The one genuinely privileged thing here is unrelated to delivering code: the eBPF
-per-server network meter has its own one-time `deploy/net-meter-setup.sh`.
+## Gotchas for editing
 
-`deploy.sh` also installs **`deploy/kgsm-monitor.leaf.json`** — the leaf config descriptor — into
-`/var/lib/kgsm/leaves/monitor.json`, unprivileged, before the binary swap. It declares every
-`Monitor__*` knob so the Control Panel can render and edit them; the daemon never reads it. Beside it
-the same build writes `deploy/kgsm-monitor.leaf.actions.json` — the actions a person needs to read this
-machine's measurements and its thresholds (`src/Monitor/ActionDeclarations.cs`), which kgsm-api checks
-before relaying — and `deploy.sh` installs it into `/var/lib/kgsm/leaves/actions/monitor.json`.
-
-**That file is generated, not written.** `TheKrystalShip.KGSM.ComponentConfig` (the `kgsm-componentconfig`
-repo, consumed as a build-only `PackageReference`) reads the `[ConfigField]` attributes and `<panel>`
-doc tags off `MonitorSettings` in the built assembly and rewrites it on every build — so **edit the
-settings class, not the JSON**, and commit what the build produces. It also validates: a settings key
-no field describes, a described key the settings file does not declare, an undocumented field, a bad
-group or `dependsOn` reference all fail the build naming the key. `Monitor.csproj` configures it with
-two properties, `LeafSettingsFile` and `LeafDescriptorFile`. Format and rules:
-`tks/leaf-config-descriptor.md`; the mechanism: `kgsm-componentconfig/README.md`.
-
-**Describing the daemon costs it no reflection and no dependency.** The attributes are compiled in as
-source, the generator reads the assembly's metadata in its own process, and the package declares no
-dependencies — so nothing reaches the AOT publish: the ILC pass stays 0-warning, no
-`System.Reflection.MetadataLoadContext.dll` lands in `artifacts/publish/`, and none of the
-descriptor's strings appear in the native binary.
-
-## Architecture
-
-**Two self-ticking `BackgroundService`s, conflation/serve-latest.** Both compute a frame on
-their own timer and publish via a single `volatile` reference swap — the HTTP scrape never
-triggers a sample; it returns the precomputed `Latest` (503 until the first tick). Stale
-frames are never queued.
-
-- `MetricsSampler` (host, 1 Hz) — the always-on path. `Build()` assembles one `Snapshot` from
-  the sampling sources. Stateful delta sources (`CpuSource`, `NetworkSource`, `DiskSource`) are
-  primed once at start so the first published frame already carries rates.
-- `ServerSampler` (per-server, **opt-in**: only wired when `Monitor__KgsmPath` is set;
-  otherwise `servers` is always `[]`). Runs **two deliberately separate cadences**:
-  - **Resync (slow, off the metrics tick):** lists KGSM instances via embedded kgsm-lib — a
-    *process spawn*, the exact cost the metrics path avoids. A single-writer drain loop is the
-    only writer of the `volatile` watch-list; KGSM lifecycle events from the journal and the
-    periodic floor both feed a coalescing `RequestResync()` (semaphore capped at 1), which is
-    what keeps the swap lock-free. `diskBytes` (a directory walk) runs on its own slow loop too.
-  - **Sample (fast, the host tick):** reads each watched server's counters from cheap kernel
-    files. No spawn, no lock.
-
-**Sampling-source pattern.** Each source splits live I/O from logic: a pure static `Parse` /
-`ComputeRates` operating on a captured `/proc` string, kept golden-file-testable. Tests pin
-expected values against fixtures in `tests/Monitor.Tests/Fixtures/`; the test project reaches
-internals via `InternalsVisibleTo`. Add a metric → follow this split, add a fixture, pin a value.
-
-**Three server `kind`s.** `systemd` / `container` are read from cgroup v2 files
-(`CgroupSampler`); `native` (standalone, no cgroup) is summed from the `/proc` process tree
-rooted at the instance `.pid` (`ProcTreeSampler`). The resolver partitions the watch-list on a
-single liveness check so the two samplers' outputs are disjoint and concatenate.
-
-**Per-server network = eBPF.** cgroup v2 has no network controller, so `rxBps`/`txBps` come from
-a passive `cgroup/skb` byte counter (`src/Monitor/bpf/net_meter.bpf.c`) attached once to
-`kgsm.slice`, read from a pinned BPF map. The pin path, map type, and key/value layout are a
-**fixed contract** between `NetworkCgroupSource` and `deploy/net-meter-setup.sh` — change one,
-change both. Setup is privileged + one-time (sudo); until then these fields read `null`.
-
-## Monitor-specific gotchas
-
-- **AOT cleanliness is non-negotiable.** Reflection-free by design. Configuration binds through
-  the config-binding source generator (on by default under `PublishAot`, so `Get<T>()` costs no
-  reflection); JSON goes through the source-generated `MonitorJsonContext`. A new serialized type
-  must be registered there or it throws at runtime — the AOT publish (above) is how you catch it.
-- **A knob lives in two places**: a `MonitorSettings` property carrying `[ConfigField]` and a
-  `<panel>` doc tag, and a key in `kgsm-monitor.settings.json`. The descriptor is generated from the
-  first and the defaults from the second, so there is no third place to keep in step. Miss either
-  and the build fails naming the key — a property with no key has an invisible default, a key with
-  no property binds to nothing.
-- **`null` ≠ `0` is a hard wire contract** (the ecosystem never-fabricate rule, concretely).
-  `null` means "not measured": io without `IOAccounting=yes`, `diskBytes` before the first walk,
-  `rxBps`/`txBps` when un-metered or the cgroup is outside `kgsm.slice`. Never substitute 0.
-- **`Monitor.Contracts` is a separately-packed NuGet** consumed by kgsm-api. **Bump its
-  `<Version>` on ANY change to `Snapshot.cs` or the JSON context**, publish it, then move kgsm-api's
-  pin — a published version is immutable, so a change reaches a consumer only under a new number.
-  Compatibility is additive-only (consumers ignore unknown fields/`kind`s); see
-  `docs/integration.md §7`.
-- **kgsm-lib version is pinned and load-bearing** (the `TheKrystalShip.KGSM.Lib`
-  `PackageReference` in `Monitor.csproj` is the authority). It resolves from the org's GitHub
-  Packages feed in `nuget.config` before publish. The pin matters: a pin older than the
-  structured-array `Instance.ports` shape throws on the detailed instance-list JSON and leaves
-  `servers` permanently `[]`.
-- **The monitor owns exactly one socket.** `Monitor__SocketPath` (`metrics.sock`, default
-  `/run/kgsm-monitor/`) is outbound: consumers scrape it. Events arrive the other way,
-  from **files** — every producer's journal, read-only, with no reservation of any kind. The resync
-  floor is the watch-list's source of truth; events only make it react sooner.
-- **`Monitor__KgsmJournalDir` names the engine's journal, not the only one read.**
-  `AddKgsmJournalFederation` tails every producer, and it must stay registered **after**
-  `AddKgsmServices` — above it the single-journal registration wins, silently, and a native
-  `server.started` (the **supervisor's** event, in its own journal) reaches nothing here. The
-  setting exists because the engine's location is configurable; the rest are found at their own state
-  directories. This daemon's own journal is among them, which costs nothing: the four handlers are
-  keyed by payload type, and a threshold episode matches none of them.
-- **The monitor stores no engine events.** It tails the journal only so `ServerSampler` learns that
-  the instance list moved, and it starts at the **tail with no cursor**: a replayed event would
-  trigger a resync the periodic floor was going to do anyway. Don't give this consumer a cursor or a
-  store — audit history belongs to the journals, read through kgsm-lib by whoever wants it.
-- **`kgsm-monitor.settings.json` is the source of truth for every knob**, not `appsettings.json`
-  (the ecosystem names these `kgsm-<leaf>.settings.json`). It is loaded explicitly from
-  `AppContext.BaseDirectory` in `Program.cs`, because the slim builder under systemd has no working
-  directory and default discovery finds nothing. An environment variable overrides one key of it
-  by spelling the path with `__` (`Monitor__IntervalMs`); a variable naming a key the file does not
-  declare binds to nothing.
-- **`AddEnvironmentVariables()` is re-registered after the settings file, and the order is
-  load-bearing.** Configuration resolves by source order and the file is appended after everything
-  the builder installed — including its own environment provider. Drop that line and the file
-  outranks every `Monitor__*` and `Logging__*` variable, so an override reads as applied while
-  changing nothing.
+- **AOT cleanliness is non-negotiable.** Configuration binds through the config-binding source generator;
+  JSON goes through the source-generated `MonitorJsonContext`, and a new serialized type is registered
+  there or it throws at runtime. The AOT publish catches it.
+- **A knob lives in two places**: a `MonitorSettings` property carrying `[ConfigField]` and a `<panel>`
+  doc tag, and a key in `kgsm-monitor.settings.json`. Miss either and the build fails naming the key.
+- **`null` is not `0`.** `null` means not measured: io without `IOAccounting=yes`, `diskBytes` before the
+  first walk, `rxBps`/`txBps` when un-metered or outside `kgsm.slice`. Never substitute 0.
+- **`Monitor.Contracts` is packed separately and consumed by kgsm-api.** Bump its `<Version>` on any change
+  to `Snapshot.cs` or the JSON context, publish it, then move kgsm-api's pin. Compatibility is additive
+  only (`docs/integration.md` section 7).
+- **The kgsm-lib pin in `Monitor.csproj` is load-bearing**: a pin older than the structured-array
+  `Instance.ports` shape throws on the detailed instance-list JSON and leaves `servers` permanently `[]`.
+- **The monitor stores no engine events and holds no cursor.** Audit history belongs to the journals, read
+  through kgsm-lib by whoever wants it. `AddKgsmJournalFederation` stays registered after
+  `AddKgsmServices` (`docs/internals.md`).
+- **`kgsm-monitor.settings.json` is the source of truth for every knob**, loaded explicitly from
+  `AppContext.BaseDirectory` in `Program.cs`. An environment variable overrides one key by spelling the path
+  with `__` (`Monitor__IntervalMs`); a variable naming an undeclared key binds to nothing.
+- **`AddEnvironmentVariables()` is re-registered after the settings file, and the order is load-bearing**:
+  drop that line and the file outranks every `Monitor__*` and `Logging__*` variable, so an override reads
+  as applied while changing nothing.
 
 ## Version tracking
 
-- **Version source:** `<Version>` in `src/Monitor/Monitor.csproj` (the daemon, and what the package ships) and `src/Monitor.Contracts/Monitor.Contracts.csproj` (NuGet contracts package — versioned independently)
-- **Packaging reads it via `deploy/version.sh`** — `./deploy/version.sh` prints the declared version, `--pkgver` prints the pacman-safe form. A package never restates a version number; it asks for one.
-- Bump the version whenever you make a user-facing change (new feature, bug fix, behaviour change). Patch for fixes, minor for new features, major for breaking changes.
-- Update `CHANGELOG.md` under `## [Unreleased]` with a brief entry for every meaningful change.
-- A git tag matching the new version should be created on release: `git tag v<version>`.
+- Versions are `<Version>` in `src/Monitor/Monitor.csproj` (the daemon and what the package ships) and in
+  `src/Monitor.Contracts/Monitor.Contracts.csproj` (the contracts package, versioned independently).
+  Packaging reads the daemon's with `./deploy/version.sh` (`--pkgver` for the pacman form).
+- Bump for every user-facing change: patch for fixes, minor for features, major for breaking changes.
+- Add a `CHANGELOG.md` entry under `## [Unreleased]` for every meaningful change.
+- Tag the bump commit `git tag -a v<version> -m "kgsm-monitor v<version>"`.
 
-## Documentation & comments: present-tense canon only
+## Read before changing
 
-Prose in this repo — every doc, `README`/`CLAUDE.md` section, and in-code comment — describes
-**how the thing works right now**, nothing else. History lives in the `CHANGELOG` and git
-history; never duplicate it into docs or code.
+- `../kgsm-docs/reference/monitor-socket.md`: the socket and snapshot contract.
+- `../kgsm-docs/systems/operations/metrics.md` and `memory-footprint.md`.
+- `../kgsm-docs/systems/engine/honesty.md`: measured or unknown.
+- `../kgsm-docs/reference/event-vocabulary.md`: the `host.*` threshold events the monitor journals.
+- `../kgsm-docs/reference/logging-convention.md`, `leaf-config-descriptor.md`.
 
-- **No transitions.** Never "was X, now Y", "used to…", "changed from…", "no longer…", or any
-  before/after framing. State the current rule flat: a sentence that only makes sense to a reader
-  who knows what the code *used to* do is dead weight, because that "before" no longer exists
-  anywhere in the code.
-- **Tombstones leave no marker.** When something is removed — dying naturally as part of the work,
-  or explicitly asked to be deleted — the removal is silent: no *"removed X"*, no *"X is gone"*,
-  no *"deprecated, use Y instead"* pointing at a corpse. The prose reads as if it never was. Code
-  kept while the thing that justified it was deleted gets a live present-tense reason to exist —
-  or goes too.
-- **No residue of the active work.** References only meaningful *during* a piece of work don't
-  survive it: *"temporary shim for the rework"*, *"added to satisfy the new requirement"*,
-  milestone/phase labels (*"per M2"*, *"the Phase 1 step"*). If a line's justification is the work
-  that produced it rather than the system as it now stands, it goes.
-- **No volatile numbers.** Counts and versions that drift — how many projects/files/tests/
-  partials exist, a dependency's pinned version, a file's line count — never go in prose: they are
-  stale the moment anything changes, and nothing fails to remind anyone. Name the authoritative
-  source instead (the csproj, the directory, the barrel file). A number belongs in prose only when
-  it *is* the contract (a port, a timeout, a cap) or a measured fact that is itself the reason a
-  design exists.
-- **Edits are replacements, not appends.** When changing an existing feature, rewrite the affected
-  doc/comment fresh as if writing it for the first time — never append a correction under the
-  stale version, and never leave the stale version standing beside the new. The current revision
-  does not converse with prior revisions.
-
-A reader six months from now should learn the system from the doc without knowing what it
-replaced. If you catch yourself explaining a change, stop — that sentence belongs in the commit
-message. When touching prose that already violates this, rewrite it to present-tense canon in
-passing.
+Docs and comments describe the system as it is now: present tense, no history, no emoji, no volatile
+numbers (workspace `../CLAUDE.md`).

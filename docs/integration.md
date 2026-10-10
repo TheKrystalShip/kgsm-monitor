@@ -6,12 +6,12 @@ exact data shape, what you can and cannot configure, and the failure modes you m
 handle. If you are reading this cold six months from now, this file is the only thing you
 need to write a correct consumer.
 
-> **TL;DR.** The monitor is a root-owned daemon that, once per second, reads kernel
-> counters and holds the **latest** host+per-server metrics frame in memory. You read that
-> frame by sending `GET /metrics` over a **unix domain socket** (default
-> `/run/kgsm-monitor/metrics.sock`). It is HTTP/1.1, unauthenticated, JSON, pull-only. It never
-> pushes, never streams, keeps no history, and computes every rate for you. Your job is to
-> scrape it and re-expose it however your service needs.
+> **TL;DR.** The monitor is a daemon that, once per second, reads kernel counters and holds
+> the **latest** host+per-server metrics frame in memory. You read that frame by sending
+> `GET /metrics` over a **unix domain socket** (default `/run/kgsm-monitor/metrics.sock`). It
+> is HTTP/1.1, unauthenticated, JSON, pull-only. It never pushes, never streams, and computes
+> every rate for you. Windowed history of the same numbers is served at `GET /metrics/history`.
+> Your job is to scrape it and re-expose it however your service needs.
 
 ---
 
@@ -23,8 +23,9 @@ Four properties drive the whole contract. Internalise them and the rest is mecha
    timer and overwrites a single in-memory `latest` frame. `GET /metrics` returns that
    frame as-is — **the scrape never triggers a sample.** Consequence: scraping faster than
    the tick returns the *same* frame repeatedly (dedupe on `ts`); scraping slower just
-   skips frames (fine — it's a gauge, not a log). There is **no buffer and no history** —
-   you only ever get the most recent frame. If you need history, *you* store it.
+   skips frames (fine — it's a gauge, not a log). `GET /metrics` has **no buffer** —
+   you only ever get the most recent frame. For a window of past values, read
+   `GET /metrics/history` (§4) instead of storing frames yourself.
 
 2. **Rates are already computed.** CPU %, network bps/pps, and disk/io bps are
    *derivatives* the monitor computes from two consecutive samples. **Do not diff frames
@@ -48,14 +49,14 @@ Four properties drive the whole contract. Internalise them and the rest is mecha
 The monitor listens on a **unix domain socket** speaking ordinary **HTTP/1.1**. There is
 **no TCP port** — the socket's filesystem permissions are the entire security boundary.
 
-- **Default path:** `/run/kgsm-monitor/metrics.sock` (override with `KGSM_MONITOR_SOCKET`).
+- **Default path:** `/run/kgsm-monitor/metrics.sock` (override with `Monitor__SocketPath`).
 - **Default perms:** `0660`, owner+group read/write. To scrape it your process must run as
-  the socket's **owner or be in its group** (typically root runs the monitor; you add the
-  API's user to a shared group — see the `Group=` recipe in
-  `deploy/kgsm-monitor.service`).
-- **This is the monitor's only socket.** Engine events reach the monitor from a file it reads
-  (`KGSM_MONITOR_KGSM_JOURNAL`, default `/var/lib/kgsm/events`), not a socket it binds — so
-  there is nothing else here to confuse it with. Always scrape `KGSM_MONITOR_SOCKET`.
+  the socket's **owner or be in its group** (the unit runs as `kgsm`; add the consumer's user
+  to that group — see `Group=` in `deploy/kgsm-monitor.service`).
+- **The scrape socket is the one to scrape.** Engine events reach the monitor from a file it
+  reads (`Monitor__KgsmJournalDir`, default `/var/lib/kgsm/events`), not a socket it binds. The
+  daemon also binds a second socket (`Monitor__SurfaceSocketPath`) for its own component
+  surface (`/component/...`); consumers of the metrics contract use `Monitor__SocketPath`.
 
 ### curl (smoke test)
 
@@ -137,14 +138,14 @@ missing key). Below is a fully-annotated example with every field; types and uni
   },
 
   "disk": {
-    "mounts": [               // real filesystems only; pseudo-fs always filtered, plus KGSM_MONITOR_MOUNT_FS_DENY
+    "mounts": [               // real filesystems only; pseudo-fs always filtered, plus Monitor__MountFsDeny
       { "mount": "/", "fs": "ext4", "totalBytes": 500107862016, "usedBytes": 120000000000, "usedPct": 24.0 }
     ],
     "io": { "readBps": 10240, "writeBps": 4096 }   // HOST aggregate block IO, bytes/sec
   },
 
   "net": {
-    "ifaces": [               // loopback + KGSM_MONITOR_IFACE_DENY prefixes (default "veth") excluded
+    "ifaces": [               // loopback + Monitor__IfaceDenyPrefixes prefixes (default "veth") excluded
       { "name": "enp4s0", "rxBps": 2048, "txBps": 1024, "rxPps": 12, "txPps": 8 }
     ]
   },
@@ -239,7 +240,7 @@ missing key). Below is a fully-annotated example with every field; types and uni
 |---|---|---|
 | `systemd` | cgroup `system.slice/<unit>.service` | a systemd-managed instance |
 | `container` | cgroup `docker-<id>.scope` / `docker/<id>` | a Docker/compose instance |
-| `native` | `/proc` process-tree walk from the instance `.pid` | a standalone process (no cgroup) |
+| `native` | the instance's cgroup under `kgsm.slice` (the watchdog creates it); a `/proc` process-tree walk from the instance `.pid` when no live cgroup exists | a standalone process |
 
 `kind` is informational for a consumer — the fields mean the same thing regardless — but it
 signals the **accuracy profile** (§3.4) and which knobs affect io accounting (§3.3).
@@ -250,15 +251,15 @@ signals the **accuracy profile** (§3.4) and which knobs affect io accounting (�
   exists when the unit sets **`IOAccounting=yes`**. Most units don't by default → `null`.
   This is opt-in at the *unit* level, not something a consumer can turn on. `null` here
   means "the kernel isn't counting it," **not** "no I/O happened."
-- **native (`/proc`):** io is read straight from `/proc/<pid>/io` (the monitor runs as
-  root), so native servers report real numbers, `0` on a quiet first tick, never `null`
-  from lack of accounting.
+- **native without a live cgroup (`/proc` fallback):** io is read from `/proc/<pid>/io`, so
+  those servers report real numbers, `0` on a quiet first tick, never `null` from lack of
+  accounting. A native server with a cgroup follows the cgroup rule above.
 
 So: `null` io ⇒ a cgroup server without `IOAccounting=yes`. Render it as "—"/"n/a", not 0.
 
 ### 3.4 Per-`kind` accuracy notes (so you can label confidently)
 
-- **`native` CPU is biased slightly low under child-churn.** The process-tree sum can't
+- **`native` CPU on the `/proc` fallback is biased slightly low under child-churn.** The process-tree sum can't
   recover CPU from helper processes that exited between ticks (a cgroup counter can), so a
   server that spawns many short-lived children reads a touch low and lumpy. Cgroup kinds
   (`systemd`/`container`) don't have this gap.
@@ -279,7 +280,7 @@ I/O *throughput* (`ioReadBps`/`ioWriteBps`) but not *space occupied*, so the foo
 temp), summing apparent file sizes. Consequences a consumer should know:
 
 - **It's on a slow cadence, not the 1 Hz tick.** A directory walk is far heavier than reading
-  a cgroup file, so it runs on its own timer (`KGSM_MONITOR_DISK_USAGE_MS`, default 60 s) and
+  a cgroup file, so it runs on its own timer (`Monitor__DiskUsageMs`, default 60 s) and
   the result is cached and conflated onto the frame. Two consecutive frames seconds apart can
   carry the *same* `diskBytes` even as cpu/mem move — that's expected, not staleness.
 - **`null` until the first walk lands**, and `null` whenever the working dir can't be read
@@ -292,8 +293,7 @@ temp), summing apparent file sizes. Consequences a consumer should know:
 
 ### 3.6 `rxBps` / `txBps` — per-server network (eBPF cgroup/skb meter)
 
-Per-server network **is** emitted now (added 2026-06-29; this reverses the earlier "deferred"
-stance). cgroup v2 has no network controller, so the missing per-cgroup byte totals come from a
+Per-server network is emitted. cgroup v2 has no network controller, so the missing per-cgroup byte totals come from a
 **passive eBPF `cgroup/skb` byte counter** attached **once** to the KGSM parent cgroup
 `/sys/fs/cgroup/kgsm.slice` (both ingress and egress, `BPF_F_ALLOW_MULTI`). `cgroup/skb` programs
 propagate to all descendants, so the one attach covers every present and future instance cgroup
@@ -365,7 +365,11 @@ and its number otherwise, and a consumer should not infer "CPU fan" from `fan1`.
 |---|---|---|---|
 | `GET /metrics` | `200` | the JSON frame (§3) | `503` until the first tick lands — see below. |
 | `GET /health` | `200` | `ok\n` (text/plain) | Liveness/availability. Returns `200` even before the first frame. |
-| `GET /metrics/history` | `200` | windowed metric series | Mapped only when metrics history is enabled. Tier picked by range. |
+| `GET /metrics/history`, `/metrics/history/summary` | `200` | windowed series for one entity, and one aggregate row per entity of a kind | Mapped only when metrics history is enabled. Tier picked by range. |
+| `GET /footprint` | `200` | what each instance has been measured to hold over its observed life | Mapped with history and footprint enabled. |
+| `GET`/`PUT`/`DELETE /thresholds`, `GET /thresholds/episodes` | `200` | the threshold rules and the episodes they established | Mapped only when thresholds are on; the one writable part of the socket. |
+| `GET /stats` | `200` | sample coverage, history and maintenance state | A human-cadence page, not a scrape target. |
+| `/component/...` | `200` | the component surface (configuration, journal, lifecycle) | Served on every listener. |
 
 - **`503 Service Unavailable` on `/metrics`** means the daemon is up but hasn't completed
   its first sample yet (a sub-second window right after start). **Handle it:** retry after
@@ -470,7 +474,7 @@ unable to answer for them.
 
 An empty `servers: []` is **ambiguous on its own**:
 
-1. **Host-only mode** — the monitor was started **without** `KGSM_MONITOR_KGSM_PATH`, so
+1. **Host-only mode** — the monitor was started **without** `Monitor__KgsmPath`, so
    per-server sampling is off entirely. `servers` will be `[]` *forever*.
 2. **Per-server mode, nothing running** — KGSM is wired up but no instances are currently
    up (stopped servers are simply absent; only running, addressable ones appear).
@@ -511,11 +515,11 @@ There is **no version field** in the payload today. The compatibility model is t
 
 | Symptom | Cause | What to do |
 |---|---|---|
-| `connect: No such file or directory` | Monitor not started, or wrong `KGSM_MONITOR_SOCKET` path | Confirm the daemon is up and the path matches its env. |
+| `connect: No such file or directory` | Monitor not started, or wrong `Monitor__SocketPath` path | Confirm the daemon is up and the path matches its env. |
 | `connect: Permission denied` | Your user isn't owner/group of the `0660` socket | Add your user to the socket's group (`Group=` recipe in the unit). |
 | `GET /metrics` → `503` | Up, but pre-first-tick | Retry after ~`intervalMs`; not fatal. |
-| `404` / `405` | Wrong path or method | Only `GET /metrics` and `GET /health` exist. |
-| `servers: []` forever | Host-only mode (no `KGSM_MONITOR_KGSM_PATH`) | Expected; see §6. |
+| `404` / `405` | Wrong path or method, or the route's feature is off | The routes are in §4. |
+| `servers: []` forever | Host-only mode (no `Monitor__KgsmPath`) | Expected; see §6. |
 | `servers: []` intermittently | No instances currently running | Expected; servers come and go. |
 | `ioReadBps`/`ioWriteBps` = `null` | cgroup server without `IOAccounting=yes` | Render "n/a", not 0. |
 | `ts` not advancing | Daemon wedged, or you're polling faster than the tick | Compare `now − ts` against `intervalMs` (§5). |
@@ -526,25 +530,28 @@ There is **no version field** in the payload today. The compatibility model is t
 
 ## 9. Configuration — what's tunable, what's fixed
 
-All monitor configuration is **environment variables** set by whoever runs the daemon
-(systemd `Environment=`). A **consumer cannot change any of it at scrape time** — there are
-no query params, headers, or control endpoints. If you need different behaviour, it's a
-*deployment* change to the monitor's unit, not something your code can request.
+All monitor configuration is the settings file `kgsm-monitor.settings.json`, with any key
+overridden by an environment variable spelled `Monitor__<Key>` (systemd `Environment=`). The
+knobs and their defaults are declared on `MonitorSettings`. A **consumer cannot change any of it
+at scrape time** — there are no query params, headers, or control endpoints besides the
+thresholds route. If you need different behaviour, it's a *deployment* change to the monitor's
+unit, not something your code can request.
 
 ### Operator-tunable (set on the monitor process)
 
-| Variable | Default | Affects the consumer how |
+| Key | Default | Affects the consumer how |
 |---|---|---|
-| `KGSM_MONITOR_SOCKET` | `/run/kgsm-monitor/metrics.sock` | **The path you connect to.** |
-| `KGSM_MONITOR_SOCKET_MODE` | `660` (octal) | Whether your user can open the socket. |
-| `KGSM_MONITOR_INTERVAL_MS` | `1000` (floor 100) | Frame cadence = your poll rate; mirrored in `intervalMs`. |
-| `KGSM_MONITOR_IFACE_DENY` | `veth` | Which interfaces appear in `net.ifaces`. |
-| `KGSM_MONITOR_MOUNT_FS_DENY` | *(empty)* | Extra fs types hidden from `disk.mounts`. |
-| `KGSM_MONITOR_KGSM_PATH` | *(empty)* | **Unset ⇒ `servers` always `[]`** (host-only). Set ⇒ per-server on. |
-| `KGSM_MONITOR_KGSM_JOURNAL` | `/var/lib/kgsm/events` | The engine event journal the monitor reads for resync signals. Read-only and shared — you may tail or query it too. |
-| `KGSM_MONITOR_RESYNC_MS` | `15000` (floor 1000) | How fast a started/stopped server's presence catches up (worst case, absent events). |
-| `KGSM_MONITOR_DISK_USAGE_MS` | `60000` (floor 5000) | How often each server's `diskBytes` footprint is recomputed (a directory walk, §3.5) — your `diskBytes` refresh rate. |
-| `KGSM_MONITOR_EVENTS` | `on` | When on, lifecycle events make new servers appear sub-second instead of after `RESYNC_MS`. |
+| `Monitor__SocketPath` | `/run/kgsm-monitor/metrics.sock` | **The path you connect to.** |
+| `Monitor__SocketMode` | `660` (octal) | Whether your user can open the socket. |
+| `Monitor__IntervalMs` | `1000` (floor 100) | Frame cadence = your poll rate; mirrored in `intervalMs`. |
+| `Monitor__IfaceDenyPrefixes` | `veth` | Which interfaces appear in `net.ifaces`. |
+| `Monitor__MountFsDeny` | *(empty)* | Extra fs types hidden from `disk.mounts`. |
+| `Monitor__KgsmPath` | *(empty)* | **Unset ⇒ `servers` always `[]`** (host-only). Set ⇒ per-server on. |
+| `Monitor__KgsmJournalDir` | `/var/lib/kgsm/events` | The engine event journal the monitor reads for resync signals. Read-only and shared — you may tail or query it too. |
+| `Monitor__ServerResyncMs` | `15000` (floor 1000) | How fast a started/stopped server's presence catches up (worst case, absent events). |
+| `Monitor__DiskUsageMs` | `60000` (floor 5000) | How often each server's `diskBytes` footprint is recomputed (a directory walk, §3.5) — your `diskBytes` refresh rate. |
+| `Monitor__EventsEnabled` | `true` | When on, lifecycle events make new servers appear sub-second instead of after `ServerResyncMs`. |
+| `Monitor__HistoryDisabled`, `Monitor__FootprintDisabled`, `Monitor__ThresholdsDisabled` | `false` | Whether `/metrics/history`, `/footprint` and `/thresholds` are mapped. |
 
 ### Fixed by design — **not** configurable, and not worth fighting
 
@@ -554,15 +561,14 @@ no query params, headers, or control endpoints. If you need different behaviour,
   for a fresh sample or a custom interval per request.
 - **Server-side filtering / selection.** No "give me just server X" query. Fetch the whole
   frame and filter client-side.
-- **History / time ranges.** Latest frame only; no `?since=`. You store history if you need
-  it.
+- **History / time ranges on `/metrics`.** Latest frame only; no `?since=`. Windowed series
+  come from `/metrics/history`.
 - **Push / streaming / SSE.** The monitor is pull-only. Streaming + auth + fan-out is the
   job of the API layer above it (the planned aggregator), not the monitor.
-- **Per-server network.** Now **measured** (`servers[].rxBps`/`txBps`) via a passive eBPF
+- **Per-server network.** Measured (`servers[].rxBps`/`txBps`) via a passive eBPF
   `cgroup/skb` meter on `kgsm.slice` — see §3.6. It is honest-`null` when the meter isn't set up or
-  the server's cgroup is outside `kgsm.slice` (today: everything but `native`-under-`kgsm.slice`),
-  so treat `null` as "—", not 0. **Container** per-server network (their own netns) is the planned
-  next addition (host `veth` stats); until then containers read `null`.
+  the server's cgroup is outside `kgsm.slice` (everything but `native`-under-`kgsm.slice`),
+  so treat `null` as "—", not 0. Containers read `null`.
 - **Auth.** None — the socket's filesystem perms are the boundary. If you need authn/authz,
   you add it in front; don't expect the monitor to.
 
@@ -571,15 +577,15 @@ no query params, headers, or control endpoints. If you need different behaviour,
 ## 10. Quick-start checklist
 
 1. Ensure the monitor is running and your user can read its socket (`0660` ⇒ shared group).
-2. Open an HTTP/1.1 client over the **unix socket** `KGSM_MONITOR_SOCKET`
-   (default `/run/kgsm-monitor/metrics.sock`) — the monitor's only socket.
+2. Open an HTTP/1.1 client over the **unix socket** `Monitor__SocketPath`
+   (default `/run/kgsm-monitor/metrics.sock`).
 3. `GET /metrics`. On `503`, retry after ~`intervalMs`.
 4. Parse the JSON (§3), **ignoring unknown fields** and tolerating unknown `kind` values.
 5. Loop at ~`intervalMs`; use `ts` for freshness/dedupe; fan out from a single loop.
 6. Handle `null` io, empty `servers`, `cpuPctCore > 100`, and reconnect-on-drop (§8).
 
-That's the whole integration surface. Everything else — auth, fan-out, history, dashboards
-— lives in *your* service, by design.
+That's the whole integration surface. Everything else — auth, fan-out, dashboards — lives in
+*your* service, by design.
 
 ---
 

@@ -78,7 +78,7 @@
 > resolution). Validated against a real container (compiled `TryRead` + golden parse tests, 97/97).
 > See §10 work tracker + `docs/integration.md §3.6`.
 >
-> **Logging** follows the ecosystem convention (`../logging-convention.md`):
+> **Logging** follows the ecosystem convention (`../kgsm-docs/reference/logging-convention.md`):
 > `Microsoft.Extensions.Logging` → `AddSystemdConsole()` (journald `<N>` priority prefix),
 > levels from `kgsm-monitor.settings.json` `Logging` + env (`Logging__LogLevel__Default`, default
 > `Information`). The `CreateSlimBuilder` host loads the settings file from `AppContext.BaseDirectory`
