@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a warning-free build (2.22.3)
+
+The metrics summary entry documents each of its parameters.
+
 ### Changed — built on the released packages (2.22.2)
 
 Builds with `TheKrystalShip.KGSM.ComponentConfig` 4.0.0 and serves its surface with

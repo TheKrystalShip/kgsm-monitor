@@ -62,6 +62,12 @@ public sealed record MetricsSummaryResponse(
     List<MetricsSummaryEntry> Entries);
 
 /// <summary>One entity's aggregate for one metric over the window.</summary>
+/// <param name="EntityId">The entity the figures describe.</param>
+/// <param name="Metric">The metric the figures are taken over.</param>
+/// <param name="Min">The smallest value in the window.</param>
+/// <param name="Max">The largest value in the window.</param>
+/// <param name="Avg">The mean value over the window.</param>
+/// <param name="Last">The newest value in the window.</param>
 /// <param name="Samples">How many rows the figures were taken over — what makes a thin window visible
 /// as thin, instead of a range that looks authoritative because it is drawn the same as any other.</param>
 public sealed record MetricsSummaryEntry(
