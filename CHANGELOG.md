@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — a patched SQLite native library (2.22.4)
+
+`SQLitePCLRaw.bundle_e_sqlite3` is pinned at a build whose native SQLite library the advisory
+GHSA-2m69-gcr7-jv3q does not cover, and the audit suppression is gone.
+
 ### Fixed — a warning-free build (2.22.3)
 
 The metrics summary entry documents each of its parameters.
