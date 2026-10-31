@@ -45,6 +45,5 @@
       "effect": "write",
       "scope": "node"
     }
-  ],
-  "requires": []
+  ]
 }
