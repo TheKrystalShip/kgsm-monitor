@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -9,6 +8,7 @@ using TheKrystalShip.KGSM.Events;
 using TheKrystalShip.KGSM.Monitor;
 using TheKrystalShip.KGSM.Monitor.Sampling;
 using TheKrystalShip.KGSM.Services;
+using TheKrystalShip.Testing;
 
 namespace TheKrystalShip.KGSM.Monitor.Tests;
 
@@ -39,9 +39,7 @@ public class ServerEventTests
             // ExecuteAsync's body runs just after StartAsync returns, so wait for the
             // listener to come up (the four RegisterHandler calls precede Initialize, so
             // the set is fully populated once Initialized flips).
-            Assert.True(
-                await WaitUntilAsync(() => events.Initialized, 5000),
-                "WireEvents never initialized the listener");
+            await Eventually.Holds(() => events.Initialized, "WireEvents initializes the listener");
             Assert.Equal(
                 new HashSet<Type>
                 {
@@ -69,9 +67,7 @@ public class ServerEventTests
         {
             // Wait for the prime resync (also guarantees handlers are registered, since
             // WireEvents runs before the prime). The 60s floor can't fire in this window.
-            Assert.True(
-                await WaitUntilAsync(() => instances.GetAllCalls >= 1, 5000),
-                "prime resync never ran");
+            await Eventually.Holds(() => instances.GetAllCalls >= 1, "the prime resync runs");
             int baseline = instances.GetAllCalls;
 
             await events.FireAsync(new InstanceStartedData
@@ -79,9 +75,7 @@ public class ServerEventTests
                 InstanceName = "factorio",
             });
 
-            Assert.True(
-                await WaitUntilAsync(() => instances.GetAllCalls > baseline, 5000),
-                $"event did not trigger a resync (GetAll calls = {instances.GetAllCalls}, baseline {baseline})");
+            await Eventually.Holds(() => instances.GetAllCalls > baseline, $"the event triggers a resync past the baseline of {baseline} GetAll calls");
         }
         finally
         {
@@ -102,9 +96,7 @@ public class ServerEventTests
             // The resync floor still primes the watch-list even with events off; waiting
             // for it also guarantees ExecuteAsync ran past WireEvents (which must not have
             // touched the listener).
-            Assert.True(
-                await WaitUntilAsync(() => instances.GetAllCalls >= 1, 5000),
-                "prime resync never ran");
+            await Eventually.Holds(() => instances.GetAllCalls >= 1, "the prime resync runs");
             Assert.False(events.Initialized);
             Assert.Empty(events.Registered);
         }
@@ -138,9 +130,7 @@ public class ServerEventTests
         {
             // Establish the prime baseline (max-without-event is 1; the 60s floor can't
             // fire here), so any further increment is unambiguously the journal event.
-            Assert.True(
-                await WaitUntilAsync(() => instances.GetAllCalls >= 1, 5000),
-                "prime resync never ran");
+            await Eventually.Holds(() => instances.GetAllCalls >= 1, "the prime resync runs");
             int baseline = instances.GetAllCalls;
 
             // The exact line KGSM appends (PascalCase, compact, one event per line, extra
@@ -151,9 +141,7 @@ public class ServerEventTests
                 {"EventType":"server.started","Data":{"InstanceName":"7dtd"},"Timestamp":"2026-06-11T00:00:00Z","Hostname":"test","KGSMVersion":"1.2.3"}
                 """);
 
-            Assert.True(
-                await WaitUntilAsync(() => instances.GetAllCalls > baseline, 10_000),
-                $"journal event did not trigger a resync (GetAll calls = {instances.GetAllCalls}, baseline {baseline})");
+            await Eventually.Holds(() => instances.GetAllCalls > baseline, $"the journal event triggers a resync past the baseline of {baseline} GetAll calls");
         }
         finally
         {
@@ -188,17 +176,6 @@ public class ServerEventTests
         await File.AppendAllTextAsync(segment, json + "\n");
     }
 
-    private static async Task<bool> WaitUntilAsync(Func<bool> condition, int timeoutMs)
-    {
-        var sw = Stopwatch.StartNew();
-        while (sw.ElapsedMilliseconds < timeoutMs)
-        {
-            if (condition())
-                return true;
-            await Task.Delay(25);
-        }
-        return condition();
-    }
 }
 
 /// <summary>An <see cref="IInstanceService"/> that only counts <see cref="GetAll"/>; the
