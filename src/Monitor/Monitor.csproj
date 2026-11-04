@@ -13,7 +13,7 @@
 
     <RootNamespace>TheKrystalShip.KGSM.Monitor</RootNamespace>
     <AssemblyName>kgsm-monitor</AssemblyName>
-    <Version>2.22.4</Version>
+    <Version>2.22.5</Version>
 
     <!-- Required by the source-generated [LibraryImport] sysconf(_SC_CLK_TCK) p/invoke in
          ProcTreeSampler (Slice 3). The generated marshalling stub uses unsafe; no hand-written
@@ -60,6 +60,7 @@
          and Events.AuditId.ForEvent (the deterministic evt_<hash> id shared with kgsm-api, so both
          sides compute the same id with zero coordination). -->
     <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="8.3.0" />
+    <PackageReference Include="TheKrystalShip.KGSM.Journal" Version="2.4.1" />
   </ItemGroup>
 
   <ItemGroup>
