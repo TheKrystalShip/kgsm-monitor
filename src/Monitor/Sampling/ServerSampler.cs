@@ -1,5 +1,4 @@
 using TheKrystalShip.KGSM.Core.Interfaces;
-using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Events;
 using TheKrystalShip.KGSM.Lifecycle;
 using TheKrystalShip.KGSM.Monitor.Contracts;
@@ -12,9 +11,8 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// <para>
 /// Two cadences, deliberately separate:
 /// <list type="bullet">
-/// <item><b>Resync (slow, off the metrics tick):</b> periodically runs KGSM's
-/// <c>instances list --detailed</c> — a <em>process spawn</em>, the exact cost the
-/// metrics path avoids — to refresh the authoritative instance list. Builds a fresh
+/// <item><b>Resync (slow, off the metrics tick):</b> periodically re-reads
+/// the engine's registry, in-process, to refresh the authoritative instance list. Builds a fresh
 /// immutable dictionary and swaps the reference (conflation, same pattern as the host
 /// frame's <c>volatile</c> latest).</item>
 /// <item><b>Sample (fast, the host tick):</b> <see cref="MetricsSampler"/> calls
@@ -31,8 +29,7 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// <see cref="MonitorOptions.KgsmJournalDir"/>, which the engine is the sole writer of. Each event
 /// simply <em>nudges</em> an immediate resync rather than mutating the list directly: the event
 /// payload carries only the instance name, not the cgroup-resolution inputs (compose-file /
-/// pid-file / systemd unit), so a partial "add" would need a lookup anyway — re-listing via the
-/// proven <see cref="IInstanceService.GetAll"/>
+/// pid-file / systemd unit), so a partial "add" would need a lookup anyway — re-listing the engine's registry
 /// keeps the watch-list <b>single-writer</b> (no lock on the volatile swap) and self-heals
 /// on the best-effort event channel. The periodic resync stays the floor; events only cut
 /// the latency from "up to <see cref="MonitorOptions.ServerResyncMs"/>" to "sub-second".
@@ -41,12 +38,12 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 public sealed class ServerSampler(
     ILogger<ServerSampler> logger,
     MonitorOptions options,
-    IInstanceService instances,
+    IServerCatalog instances,
     IEventService? events = null,
     LeafLifecycle? lifecycle = null) : BackgroundService
 {
-    private static readonly IReadOnlyDictionary<string, Instance> Empty =
-        new Dictionary<string, Instance>();
+    private static readonly IReadOnlyDictionary<string, WatchedServer> Empty =
+        new Dictionary<string, WatchedServer>();
 
     // logger threaded in so CgroupSampler -> NetworkCgroupSource can log the eBPF meter's
     // availability once (pin/cap state), without making every sub-sampler take a logger.
@@ -91,7 +88,7 @@ public sealed class ServerSampler(
 
     // Swapped wholesale by the resync loop, read by the sampling tick. Reference
     // assignment is atomic; readers never see a torn mid-resync list.
-    private volatile IReadOnlyDictionary<string, Instance> _watch = Empty;
+    private volatile IReadOnlyDictionary<string, WatchedServer> _watch = Empty;
 
     /// <summary>
     /// Read every server's metrics for the current watch-list: cgroup counters for the
@@ -293,14 +290,14 @@ public sealed class ServerSampler(
     {
         try
         {
-            var all = instances.GetAll();
+            var all = instances.List();
             _watch = all.Count == 0 ? Empty : all;
             logger.LogDebug("server resync: {Count} instance(s) known", all.Count);
         }
         catch (Exception ex)
         {
             // Keep the previous watch-list rather than blanking servers on a transient
-            // KGSM hiccup (process spawn failure, timeout, malformed output).
+            // engine hiccup (an unreadable registry or a library mid-change).
             logger.LogWarning(ex, "server resync failed; keeping previous watch-list");
         }
     }

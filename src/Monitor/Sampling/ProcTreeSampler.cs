@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
-using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Monitor.Contracts;
 
 namespace TheKrystalShip.KGSM.Monitor.Sampling;
@@ -86,7 +85,7 @@ internal sealed partial class ProcTreeSampler
     /// <paramref name="instances"/> (the resync snapshot). Stopped / non-native servers are
     /// absent from the result, not zero-valued.
     /// </summary>
-    public ServerMetrics[] Sample(IReadOnlyDictionary<string, Instance> instances)
+    public ServerMetrics[] Sample(IReadOnlyDictionary<string, WatchedServer> instances)
     {
         long now = Environment.TickCount64;
         double dt = _prevTicks == 0 ? 1.0 : Math.Max(1, now - _prevTicks) / 1000.0;
@@ -99,7 +98,7 @@ internal sealed partial class ProcTreeSampler
         // adopted, or a pre-Inc-4 KGSM) is exactly what this /proc-tree fallback covers. The
         // FirstExisting check is the same liveness arbiter CgroupSampler uses, so the two
         // samplers partition the watch-list with no overlap.
-        var natives = new List<KeyValuePair<string, Instance>>();
+        var natives = new List<KeyValuePair<string, WatchedServer>>();
         foreach (var kv in instances)
         {
             var target = ServerCgroupResolver.Resolve(kv.Value);

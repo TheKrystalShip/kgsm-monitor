@@ -1,4 +1,3 @@
-using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Monitor.Sampling;
 
 namespace TheKrystalShip.KGSM.Monitor.Tests;
@@ -92,9 +91,9 @@ public class DiskUsageSamplerTests : IDisposable
     {
         Write("install/game", 4096);
         var sampler = new DiskUsageSampler();
-        var watch = new Dictionary<string, Instance>
+        var watch = new Dictionary<string, WatchedServer>
         {
-            ["srv"] = new Instance { Name = "srv", WorkingDir = _root },
+            ["srv"] = new WatchedServer { Name = "srv", WorkingDir = _root },
         };
 
         sampler.Refresh(watch);
@@ -108,9 +107,9 @@ public class DiskUsageSamplerTests : IDisposable
         var sampler = new DiskUsageSampler();
         Assert.Null(sampler.Get("srv")); // never refreshed yet
 
-        sampler.Refresh(new Dictionary<string, Instance>
+        sampler.Refresh(new Dictionary<string, WatchedServer>
         {
-            ["nodir"] = new Instance { Name = "nodir", WorkingDir = "/no/such/path" },
+            ["nodir"] = new WatchedServer { Name = "nodir", WorkingDir = "/no/such/path" },
         });
 
         Assert.Null(sampler.Get("nodir"));   // unreadable working dir → absent, not 0
@@ -128,10 +127,10 @@ public class DiskUsageSamplerTests : IDisposable
 
         Assert.Empty(sampler.All); // never refreshed yet
 
-        sampler.Refresh(new Dictionary<string, Instance>
+        sampler.Refresh(new Dictionary<string, WatchedServer>
         {
-            ["stopped"] = new Instance { Name = "stopped", WorkingDir = _root },
-            ["nodir"] = new Instance { Name = "nodir", WorkingDir = "/no/such/path" },
+            ["stopped"] = new WatchedServer { Name = "stopped", WorkingDir = _root },
+            ["nodir"] = new WatchedServer { Name = "nodir", WorkingDir = "/no/such/path" },
         });
 
         Assert.Equal(4096L, Assert.Contains("stopped", sampler.All));

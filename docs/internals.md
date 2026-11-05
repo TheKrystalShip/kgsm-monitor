@@ -14,8 +14,8 @@ Two self-ticking `BackgroundService`s compute a frame on their own timer and pub
   once at start so the first published frame already carries rates.
 - `ServerSampler` (per-server) is opt-in: it is wired only when `Monitor__KgsmPath` is set; otherwise
   `servers` is always `[]`. It runs two separate cadences.
-  - **Resync (slow, off the metrics tick)** lists KGSM instances through embedded kgsm-lib, a process
-    spawn, which is the cost the metrics path avoids. A single-writer drain loop is the only writer of
+  - **Resync (slow, off the metrics tick)** reads the engine's registry in-process through the engine core, which opens every
+    instance's config and is the cost the metrics path avoids. A single-writer drain loop is the only writer of
     the `volatile` watch-list. KGSM lifecycle events from the journal and the periodic floor both feed a
     coalescing `RequestResync()` (a semaphore capped at 1), which keeps the swap lock-free. `diskBytes`
     (a directory walk) runs on its own slow loop.

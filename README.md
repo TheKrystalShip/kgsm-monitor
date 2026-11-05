@@ -45,7 +45,7 @@ stale override from looking applied.
 | `IntervalMs` | `Monitor__IntervalMs` | `1000` | Sampling cadence (floor 100 ms) |
 | `IfaceDenyPrefixes` | `Monitor__IfaceDenyPrefixes` | `veth` | Comma-separated interface-name prefixes to exclude |
 | `MountFsDeny` | `Monitor__MountFsDeny` | *(empty)* | Extra fs types to hide (pseudo-fs already filtered) |
-| `KgsmPath` | `Monitor__KgsmPath` | *(empty)* | Path to `kgsm.sh`. **Unset ⇒ host-only**; set ⇒ per-server cgroup sampling on |
+| `KgsmPath` | `Monitor__KgsmPath` | *(empty)* | Path to the `kgsm` binary. **Unset ⇒ host-only**; set ⇒ per-server cgroup sampling on |
 | `KgsmJournalDir` | `Monitor__KgsmJournalDir` | `/var/lib/kgsm/events` | The engine's event journal the monitor tails for KGSM lifecycle events |
 | `ServerResyncMs` | `Monitor__ServerResyncMs` | `15000` | How often to re-list KGSM instances (floor 1 s; off the metrics tick) |
 | `EventsEnabled` | `Monitor__EventsEnabled` | `true` | Tail the engine journal for lifecycle events. Off ⇒ resync-only |
@@ -90,8 +90,8 @@ native servers read io straight from `/proc` as root, so they need no such flag.
 > helpers reads slightly low; summed RSS double-counts pages shared across the tree
 > (overcount vs a cgroup's `memory.current`). Measured-and-labeled, never fabricated.
 
-The watch-list refreshes on a slow timer (`Monitor__ServerResyncMs`, off the metrics tick
-since it spawns `kgsm.sh`). The low-latency half comes from the engine's append-only event
+The watch-list refreshes on a slow timer (`Monitor__ServerResyncMs`, off the metrics tick,
+since it reads every instance's config). The low-latency half comes from the engine's append-only event
 journal, which the monitor tails: each `server.started`, `server.stopped`,
 `server.uninstall.removed` or `server.uninstalled` line *nudges* an immediate resync, so a
 freshly-started server shows up sub-second rather than after up to a full resync interval. Nothing
@@ -128,7 +128,7 @@ self-ticking sampler, env-configurable filters, golden-file tests, measured self
 ≈ 0.02 % of host under full load. **Perf baseline:** a full diagnostic frame is **1.61 ms**
 (0.16 % of the 1 s tick; ~620× headroom) — see **[bench/BASELINE.md](bench/BASELINE.md)**.
 
-Slice 2a (**per-server cgroups + embedded `kgsm-lib`**) — **complete & AOT-proven**: a
+Slice 2a (**per-server cgroups + the embedded engine core**) — **complete & AOT-proven**: a
 never-failing resolver + stat-and-skip `CgroupSampler` (cpu/mem/pids, opt-in io) driven by
 an off-tick KGSM instance resync; per-server read **= 48 µs** (100 servers ≈ 0.5 % of the tick).
 

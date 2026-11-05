@@ -51,10 +51,10 @@ public sealed class MonitorOptions
     public IReadOnlyList<string> IfaceDenyPrefixes { get; init; } = ["veth"];
 
     /// <summary>
-    /// Path to the KGSM executable (<c>kgsm.sh</c>). When
+    /// Path to the KGSM executable (<c>kgsm</c>). When
     /// empty (the default) per-server sampling is disabled and the monitor runs host-only,
     /// so the daemon is useful even where KGSM is absent. When set, the monitor periodically
-    /// runs <c>instances list --detailed</c> to learn the server watch-list.
+    /// reads the engine's registry to learn the server watch-list.
     /// </summary>
     public string KgsmPath { get; init; } = string.Empty;
 
@@ -69,8 +69,8 @@ public sealed class MonitorOptions
 
     /// <summary>
     /// How often to re-list KGSM instances (the source-of-truth resync), in milliseconds.
-    /// Default 15s, floor 1s. This shells out to KGSM (a
-    /// process spawn — the very cost the metrics path avoids), so it runs on its own slow
+    /// Default 15s, floor 1s. This opens every instance's
+    /// config (the cost the metrics path avoids), so it runs on its own slow
     /// cadence, off the 1 Hz metrics tick.
     /// </summary>
     public int ServerResyncMs { get; init; } = 15_000;

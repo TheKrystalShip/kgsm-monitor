@@ -7,7 +7,7 @@ After=network.target
 Type=simple
 # Runs as the KGSM user, NOT root. The monitor only READS: cgroup v2 counters (the
 # per-instance cgroups under kgsm.slice are world-readable; kgsm-watchdog — the peer —
-# OWNS and creates them), this user's /proc, and /sys. It also spawns kgsm.sh, which MUST
+# OWNS and creates them), this user's /proc, and /sys. It also reads the engine's registry, which MUST
 # run as the KGSM user to enumerate that user's instances. uid/gid 1000 = the KGSM user,
 # matching kgsm-watchdog's KGSM_WATCHDOG_UID/GID. Adjust both lines for a different host.
 User=kgsm
@@ -60,9 +60,9 @@ Restart=always
 RestartSec=2
 
 # Hardening kept minimal/compatible: the daemon reads /proc, /sys, /sys/fs/cgroup and /home
-# (kgsm.sh + instance config) and writes only its RuntimeDirectory socket. ProtectHome/
+# (the engine's registry + instance config) and writes only its RuntimeDirectory socket. ProtectHome/
 # ProtectSystem=strict are intentionally omitted — they'd hide or freeze the /home paths
-# kgsm.sh needs. AF_UNIX is the only socket family it uses (bpf() is not socket/AF-gated).
+# the engine needs. AF_UNIX is the only socket family it uses (bpf() is not socket/AF-gated).
 NoNewPrivileges=true
 PrivateTmp=true
 RestrictAddressFamilies=AF_UNIX

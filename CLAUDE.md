@@ -56,11 +56,13 @@ dependency to the AOT publish. Format: `../kgsm-docs/reference/leaf-config-descr
 - **`Monitor.Contracts` is packed separately and consumed by kgsm-api.** Bump its `<Version>` on any change
   to `Snapshot.cs` or the JSON context, publish it, then move kgsm-api's pin. Compatibility is additive
   only (`docs/integration.md` section 7).
-- **The kgsm-lib pin in `Monitor.csproj` is load-bearing**: a pin older than the structured-array
-  `Instance.ports` shape throws on the detailed instance-list JSON and leaves `servers` permanently `[]`.
+- **The watch-list is the engine core's registry read** (`EngineReader` from `TheKrystalShip.KGSM.Engine`,
+  wrapped by `EngineServerCatalog`). The engine package's version names the registry format the monitor
+  reads; the monitor writes nothing to the engine. `Monitor__KgsmPath` names the `kgsm` binary, which
+  locates the install root.
 - **The monitor stores no engine events and holds no cursor.** Audit history belongs to the journals, read
-  through kgsm-lib by whoever wants it. `AddKgsmJournalFederation` stays registered after
-  `AddKgsmServices` (`docs/internals.md`).
+  through the Journal package by whoever wants it. `AddKgsmJournalFederation` stays registered after
+  `AddKgsmJournalReader` (`docs/internals.md`).
 - **`kgsm-monitor.settings.json` is the source of truth for every knob**, loaded explicitly from
   `AppContext.BaseDirectory` in `Program.cs`. An environment variable overrides one key by spelling the path
   with `__` (`Monitor__IntervalMs`); a variable naming an undeclared key binds to nothing.

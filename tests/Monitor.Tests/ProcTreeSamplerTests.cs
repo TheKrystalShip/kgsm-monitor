@@ -1,4 +1,3 @@
-using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Monitor.Sampling;
 
 namespace TheKrystalShip.KGSM.Monitor.Tests;
@@ -212,7 +211,7 @@ public class ProcTreeSamplerSampleTests : IDisposable
         // Point at a non-existent /proc to prove the cost gate skips the scan entirely: a
         // container-only watch-list (no native server) must produce nothing and must not throw.
         var sampler = new ProcTreeSampler("/nonexistent-proc-root");
-        var instances = new Dictionary<string, Instance>
+        var instances = new Dictionary<string, WatchedServer>
         {
             ["containerized"] = new()
             {
@@ -226,11 +225,11 @@ public class ProcTreeSamplerSampleTests : IDisposable
 
     // --- helpers ---
 
-    private Dictionary<string, Instance> OneNative(string id, int rootPid)
+    private Dictionary<string, WatchedServer> OneNative(string id, int rootPid)
     {
         string pidFile = Path.Combine(_root, $"{id}.pid");
         File.WriteAllText(pidFile, rootPid + "\n");
-        return new Dictionary<string, Instance>
+        return new Dictionary<string, WatchedServer>
         {
             [id] = new()
             {

@@ -1,5 +1,4 @@
 using System.Globalization;
-using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Monitor.Contracts;
 
 namespace TheKrystalShip.KGSM.Monitor.Sampling;
@@ -64,7 +63,7 @@ internal sealed class CgroupSampler
     /// <paramref name="instances"/> (the resync snapshot). Non-running / non-cgroup
     /// servers are absent from the result, not zero-valued.
     /// </summary>
-    public ServerMetrics[] Sample(IReadOnlyDictionary<string, Instance> instances)
+    public ServerMetrics[] Sample(IReadOnlyDictionary<string, WatchedServer> instances)
     {
         long now = Environment.TickCount64;
         double dt = _prevTicks == 0 ? 1.0 : Math.Max(1, now - _prevTicks) / 1000.0;

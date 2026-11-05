@@ -1,9 +1,8 @@
-using TheKrystalShip.KGSM.Core.Models;
 
 namespace TheKrystalShip.KGSM.Monitor.Sampling;
 
 /// <summary>
-/// Resolves a KGSM <see cref="Instance"/> to candidate cgroup v2 directories,
+/// Resolves a watched server to candidate cgroup v2 directories,
 /// keyed on is-container. It never throws and never asserts liveness — it returns a
 /// best-guess, ordered candidate set and lets <see cref="CgroupSampler"/> stat those
 /// paths each tick, skipping a server whose cgroup is absent.
@@ -14,12 +13,10 @@ namespace TheKrystalShip.KGSM.Monitor.Sampling;
 /// a <em>native</em> server whose cgroup has not been created yet.
 /// </para>
 /// <para>
-/// A <em>native</em> server is cgroup-addressable when KGSM supplies its per-instance
-/// cgroup directory via <see cref="Instance.CgroupPath"/> (<c>kgsm.slice/&lt;inst&gt;</c>,
-/// the path kgsm-watchdog creates) — <see cref="CgroupSampler"/> then samples it directly.
-/// A native server with an empty <see cref="Instance.CgroupPath"/> (cgroups disabled, or a
-/// KGSM too old to emit the field) stays unaddressable and is handled by the process-tree
-/// sampler. Its <see cref="Target.Kind"/> remains <c>"native"</c> in both cases.
+/// A <em>native</em> server is cgroup-addressable through its per-instance cgroup
+/// directory, <see cref="WatchedServer.CgroupPath"/> (below <c>kgsm.slice</c>, the path kgsm-watchdog
+/// creates) — <see cref="CgroupSampler"/> then samples it directly. A native server with an empty
+/// <see cref="WatchedServer.CgroupPath"/> is unaddressable and is handled by the process-tree sampler. Its <see cref="Target.Kind"/> remains <c>"native"</c> in both cases.
 /// </para>
 /// </summary>
 internal static class ServerCgroupResolver
@@ -41,7 +38,7 @@ internal static class ServerCgroupResolver
     /// instance is stopped, or the container id/driver guess is wrong) — that is by
     /// design; existence is checked at sample time.
     /// </summary>
-    internal static Target Resolve(Instance instance)
+    internal static Target Resolve(WatchedServer instance)
     {
         // container: the .pid file is overloaded to hold a Docker container id (a real
         // PID for native instances). compose_file is the verified is-container signal
@@ -60,10 +57,10 @@ internal static class ServerCgroupResolver
         }
 
         // native: KGSM derives the per-instance cgroup (kgsm.slice/<inst>) and surfaces it
-        // as Instance.CgroupPath (Inc 4). When present, hand it to CgroupSampler as the
+        // as WatchedServer.CgroupPath. When present, hand it to CgroupSampler as the
         // candidate; existence is still checked at sample time, so a not-yet-created cgroup
-        // simply falls through. Empty CgroupPath (cgroups disabled, or a pre-Inc-4 KGSM) ->
-        // no candidate -> ProcTreeSampler's /proc fallback owns it.
+        // simply falls through. An empty CgroupPath gives no candidate, and ProcTreeSampler's
+        // /proc fallback owns the server.
         if (!string.IsNullOrEmpty(instance.CgroupPath))
             return new Target("native", [instance.CgroupPath]);
 

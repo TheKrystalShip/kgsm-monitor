@@ -1,4 +1,3 @@
-using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Monitor.Sampling;
 
 namespace TheKrystalShip.KGSM.Monitor.Tests;
@@ -89,7 +88,7 @@ public class ServerCgroupResolverTests
         try
         {
             File.WriteAllText(pidFile, "abc123def456\n");
-            var instance = new Instance
+            var instance = new WatchedServer
             {
                 Name = "valheim",
                 ComposeFile = "/opt/valheim/docker-compose.yml",
@@ -112,7 +111,7 @@ public class ServerCgroupResolverTests
     [Fact]
     public void Container_without_readable_pid_file_is_not_addressable()
     {
-        var instance = new Instance
+        var instance = new WatchedServer
         {
             Name = "ghost",
             ComposeFile = "/opt/ghost/docker-compose.yml",
@@ -128,7 +127,7 @@ public class ServerCgroupResolverTests
     [Fact]
     public void Native_without_cgroup_path_is_not_addressable_deferred_to_slice3()
     {
-        var instance = new Instance { Name = "raw" }; // native: no compose_file, no cgroup_path
+        var instance = new WatchedServer { Name = "raw" }; // native: no compose_file, no cgroup_path
 
         var target = ServerCgroupResolver.Resolve(instance);
 
@@ -140,9 +139,9 @@ public class ServerCgroupResolverTests
     [Fact]
     public void Native_with_cgroup_path_resolves_to_that_single_candidate()
     {
-        // Inc 4: KGSM derives kgsm.slice/<inst> and surfaces it as Instance.CgroupPath; the
+        // Inc 4: KGSM derives kgsm.slice/<inst> and surfaces it as WatchedServer.CgroupPath; the
         // resolver hands it straight to CgroupSampler as the sole candidate. Kind stays "native".
-        var instance = new Instance { Name = "factorio-01", CgroupPath = "/sys/fs/cgroup/kgsm.slice/factorio-01" };
+        var instance = new WatchedServer { Name = "factorio-01", CgroupPath = "/sys/fs/cgroup/kgsm.slice/factorio-01" };
 
         var target = ServerCgroupResolver.Resolve(instance);
 
@@ -186,7 +185,7 @@ public class NativeCgroupPartitionTests : IDisposable
         File.WriteAllText(pidFile, "500\n");
         WriteProc(500, ppid: 1, utime: 10, stime: 5, start: 111, rssPages: 10);
 
-        var instances = new Dictionary<string, Instance>
+        var instances = new Dictionary<string, WatchedServer>
         {
             ["factorio-01"] = new() { Name = "factorio-01", CgroupPath = cgDir, PidFile = pidFile },
         };
@@ -212,7 +211,7 @@ public class NativeCgroupPartitionTests : IDisposable
         File.WriteAllText(pidFile, "600\n");
         WriteProc(600, ppid: 1, utime: 3, stime: 1, start: 222, rssPages: 5);
 
-        var instances = new Dictionary<string, Instance>
+        var instances = new Dictionary<string, WatchedServer>
         {
             ["survival"] = new() { Name = "survival", CgroupPath = missingCg, PidFile = pidFile },
         };
@@ -279,7 +278,7 @@ public class NetworkCgroupSourceTests : IDisposable
         File.WriteAllText(Path.Combine(cgDir, "memory.current"), "2097152\n");
         File.WriteAllText(Path.Combine(cgDir, "pids.current"), "9\n");
 
-        var instances = new Dictionary<string, Instance>
+        var instances = new Dictionary<string, WatchedServer>
         {
             ["terraria-01"] = new() { Name = "terraria-01", CgroupPath = cgDir },
         };

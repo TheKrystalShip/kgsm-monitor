@@ -1,4 +1,5 @@
 using TheKrystalShip.KGSM.Core.Models;
+using TheKrystalShip.KGSM.Engine.Reading;
 using TheKrystalShip.KGSM.Extensions;
 using TheKrystalShip.KGSM.Monitor;
 using TheKrystalShip.KGSM.Monitor.Contracts;
@@ -58,7 +59,7 @@ var options = MonitorOptions.FromSettings(settings);
 builder.Services.AddSingleton(options);
 
 // Per-server sampling (Slice 2) is opt-in: only when a KGSM path is configured. The
-// embedded kgsm-lib supplies the instance watch-list (resync) and, later, event deltas.
+// engine core supplies the instance watch-list (resync) and the journal reader the event deltas.
 // Without it the monitor runs host-only and the servers array is simply empty.
 if (options.KgsmEnabled)
 {
@@ -67,19 +68,22 @@ if (options.KgsmEnabled)
     // Tail with no cursor — these events only trigger a watch-list resync, and the resync floor
     // re-derives the same answer anyway, so replaying a backlog on start would be redundant work
     // rather than recovered state. The monitor persists no event, so there is nothing to catch up.
-    builder.Services.AddKgsmServices(new KgsmOptions
+    builder.Services.AddKgsmJournalReader(new JournalReadOptions
     {
-        KgsmPath = options.KgsmPath,
         EventJournalDirectory = options.KgsmJournalDir,
         EventStartPosition = EventStartPosition.Tail
     });
+
+    // The watch-list is the engine's registry, read in-process by the engine core.
+    builder.Services.AddSingleton(_ => new EngineReader(new EngineReaderOptions { BinaryPath = options.KgsmPath }));
+    builder.Services.AddSingleton<IServerCatalog, EngineServerCatalog>();
 
     // Read every producer's journal, not the engine's alone. The supervisor owns server.started
     // for a native server, so a reader of the engine's journal alone learns of a start only when
     // the resync floor comes round — the event is there to react sooner, and half of them were
     // landing somewhere this daemon was not looking.
     //
-    // Order-independent with respect to AddKgsmServices: both register the same resolution rule, and
+    // Order-independent with respect to AddKgsmJournalReader: both register the same resolution rule, and
     // whether the source is federated is decided from what the container holds rather than by which
     // call came last.
     //

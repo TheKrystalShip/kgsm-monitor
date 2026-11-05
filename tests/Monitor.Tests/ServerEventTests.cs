@@ -3,7 +3,6 @@ using System.Text;
 using Microsoft.Extensions.Logging.Abstractions;
 using TheKrystalShip.KGSM.Core.Interfaces;
 using TheKrystalShip.KGSM.Core.Models;
-using TheKrystalShip.KGSM.Core.Models.Enums;
 using TheKrystalShip.KGSM.Events;
 using TheKrystalShip.KGSM.Monitor;
 using TheKrystalShip.KGSM.Monitor.Sampling;
@@ -20,7 +19,7 @@ namespace TheKrystalShip.KGSM.Monitor.Tests;
 /// listener, and that firing one nudges an authoritative resync.</item>
 /// <item><b>Integration (a real journal):</b> a real <see cref="EventJournalReader"/> +
 /// <see cref="EventService"/> over a temp journal directory — a line appended exactly as
-/// the engine writes it must deserialize through <c>KgsmJsonContext</c> and trigger a
+/// the engine writes it must deserialize through <c>JournalJsonContext</c> and trigger a
 /// resync. This is the high-risk surface (real deserialization + dispatch) the fakes
 /// can't reach.</item>
 /// </list>
@@ -31,7 +30,7 @@ public class ServerEventTests
     public async Task WireEvents_subscribes_to_the_four_lifecycle_events_and_initializes()
     {
         var events = new RecordingEventService();
-        var sampler = NewSampler(new CountingInstanceService(), events, EventsEnabled: true);
+        var sampler = NewSampler(new CountingServerCatalog(), events, EventsEnabled: true);
 
         await sampler.StartAsync(CancellationToken.None);
         try
@@ -57,7 +56,7 @@ public class ServerEventTests
     [Fact]
     public async Task Firing_a_lifecycle_event_nudges_a_resync()
     {
-        var instances = new CountingInstanceService();
+        var instances = new CountingServerCatalog();
         var events = new RecordingEventService();
         // Long resync floor so the periodic nudge can't move the counter inside the window.
         var sampler = NewSampler(instances, events, EventsEnabled: true, resyncMs: 60_000);
@@ -67,15 +66,15 @@ public class ServerEventTests
         {
             // Wait for the prime resync (also guarantees handlers are registered, since
             // WireEvents runs before the prime). The 60s floor can't fire in this window.
-            await Eventually.Holds(() => instances.GetAllCalls >= 1, "the prime resync runs");
-            int baseline = instances.GetAllCalls;
+            await Eventually.Holds(() => instances.ListCalls >= 1, "the prime resync runs");
+            int baseline = instances.ListCalls;
 
             await events.FireAsync(new InstanceStartedData
             {
                 InstanceName = "factorio",
             });
 
-            await Eventually.Holds(() => instances.GetAllCalls > baseline, $"the event triggers a resync past the baseline of {baseline} GetAll calls");
+            await Eventually.Holds(() => instances.ListCalls > baseline, $"the event triggers a resync past the baseline of {baseline} List calls");
         }
         finally
         {
@@ -86,7 +85,7 @@ public class ServerEventTests
     [Fact]
     public async Task Events_disabled_skips_the_listener_but_still_primes_the_watch_list()
     {
-        var instances = new CountingInstanceService();
+        var instances = new CountingServerCatalog();
         var events = new RecordingEventService();
         var sampler = NewSampler(instances, events, EventsEnabled: false, resyncMs: 60_000);
 
@@ -96,7 +95,7 @@ public class ServerEventTests
             // The resync floor still primes the watch-list even with events off; waiting
             // for it also guarantees ExecuteAsync ran past WireEvents (which must not have
             // touched the listener).
-            await Eventually.Holds(() => instances.GetAllCalls >= 1, "the prime resync runs");
+            await Eventually.Holds(() => instances.ListCalls >= 1, "the prime resync runs");
             Assert.False(events.Initialized);
             Assert.Empty(events.Registered);
         }
@@ -112,9 +111,8 @@ public class ServerEventTests
         string journal = Path.Combine(Path.GetTempPath(), $"kgsm-mon-journal-{Guid.NewGuid():N}");
         Directory.CreateDirectory(journal);
 
-        var kgsmOptions = new KgsmOptions
+        var kgsmOptions = new JournalReadOptions
         {
-            KgsmPath = "/bin/true",
             EventJournalDirectory = journal,
             EventStartPosition = EventStartPosition.CursorOrOldest
         };
@@ -122,7 +120,7 @@ public class ServerEventTests
             kgsmOptions, new NullEventCursorStore(), NullLogger<EventJournalReader>.Instance);
         await using var events = new EventService(reader, NullLogger<EventService>.Instance);
 
-        var instances = new CountingInstanceService();
+        var instances = new CountingServerCatalog();
         var sampler = NewSampler(instances, events, EventsEnabled: true, resyncMs: 60_000, journalDir: journal);
 
         await sampler.StartAsync(CancellationToken.None);
@@ -130,18 +128,18 @@ public class ServerEventTests
         {
             // Establish the prime baseline (max-without-event is 1; the 60s floor can't
             // fire here), so any further increment is unambiguously the journal event.
-            await Eventually.Holds(() => instances.GetAllCalls >= 1, "the prime resync runs");
-            int baseline = instances.GetAllCalls;
+            await Eventually.Holds(() => instances.ListCalls >= 1, "the prime resync runs");
+            int baseline = instances.ListCalls;
 
             // The exact line KGSM appends (PascalCase, compact, one event per line, extra
             // top-level fields ignored by EventWrapper). This must round-trip through the
-            // source-generated KgsmJsonContext.
+            // source-generated JournalJsonContext.
             await AppendEventAsync(journal,
                 """
                 {"EventType":"server.started","Data":{"InstanceName":"7dtd"},"Timestamp":"2026-06-11T00:00:00Z","Hostname":"test","KGSMVersion":"1.2.3"}
                 """);
 
-            await Eventually.Holds(() => instances.GetAllCalls > baseline, $"the journal event triggers a resync past the baseline of {baseline} GetAll calls");
+            await Eventually.Holds(() => instances.ListCalls > baseline, $"the journal event triggers a resync past the baseline of {baseline} List calls");
         }
         finally
         {
@@ -153,7 +151,7 @@ public class ServerEventTests
     // --- helpers -----------------------------------------------------------------
 
     private static ServerSampler NewSampler(
-        IInstanceService instances,
+        IServerCatalog instances,
         IEventService events,
         bool EventsEnabled,
         int resyncMs = 15_000,
@@ -178,62 +176,17 @@ public class ServerEventTests
 
 }
 
-/// <summary>An <see cref="IInstanceService"/> that only counts <see cref="GetAll"/>; the
-/// sampler touches nothing else, so the rest throws.</summary>
-internal sealed class CountingInstanceService : IInstanceService
+/// <summary>An <see cref="IServerCatalog"/> that only counts its listings.</summary>
+internal sealed class CountingServerCatalog : IServerCatalog
 {
-    private int _getAllCalls;
-    public int GetAllCalls => Volatile.Read(ref _getAllCalls);
+    private int _listCalls;
+    public int ListCalls => Volatile.Read(ref _listCalls);
 
-    public Dictionary<string, Instance> GetAll()
+    public IReadOnlyDictionary<string, WatchedServer> List()
     {
-        Interlocked.Increment(ref _getAllCalls);
-        return new Dictionary<string, Instance>();
+        Interlocked.Increment(ref _listCalls);
+        return new Dictionary<string, WatchedServer>();
     }
-
-    public Dictionary<string, Instance>? GetAllOrNull() => new();
-    public Instance? GetInstanceInfo(string instanceName) => throw new NotImplementedException();
-    public InstanceRuntimeStatus? GetInstanceStatus(string instanceName) => throw new NotImplementedException();
-    public Dictionary<string, Reading<InstanceRuntimeStatus>> GetAllStatuses(bool fast = false) => throw new NotImplementedException();
-    public KgsmResult Install(string blueprintName, string? library = null, string? version = null, string? displayName = null, string? actor = null, string? origin = null, int? port = null, bool? start = null, string? id = null) => throw new NotImplementedException();
-    public KgsmResult Uninstall(string instanceName, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult Move(string instanceName, string library, bool skipSpaceCheck = false, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult Announce(string instanceName, string message, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult SetDisplayName(string instanceId, string displayName, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public ICollection<string> GetLogs(string instanceName, int maxLines = 10) => throw new NotImplementedException();
-    public Task<ICollection<string>> GetLogsAsync(string instanceName, int maxLines = 10, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-    public KgsmResult GetStatus(string instanceName) => throw new NotImplementedException();
-    public KgsmResult CheckUpdate(string instanceName, bool json = false, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult DeleteBackup(string instanceName, string backupName, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult Kick(string instanceName, string target, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult Ban(string instanceName, string target, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult Unban(string instanceName, string target, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult GetInfo(string instanceName) => throw new NotImplementedException();
-    public bool IsActive(string instanceName) => throw new NotImplementedException();
-    public KgsmResult Start(string instanceName, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult Stop(string instanceName, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult Restart(string instanceName, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult GetInstalledVersion(string instanceName) => throw new NotImplementedException();
-    public KgsmResult GetLatestVersion(string instanceName) => throw new NotImplementedException();
-    public KgsmResult CheckUpdate(string instanceName) => throw new NotImplementedException();
-    public KgsmResult Update(string instanceName, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult GetBackups(string instanceName) => throw new NotImplementedException();
-    public List<InstanceBackup> GetBackupsDetailed(string instanceName) => throw new NotImplementedException();
-    public InstanceNoteResult SetInstanceNote(string instanceName, string body, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult CreateBackup(string instanceName, string? actor = null, string? origin = null, string? reason = null, string? retention = null) => throw new NotImplementedException();
-    public KgsmResult PinBackup(string instanceName, string backupName, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult UnpinBackup(string instanceName, string backupName, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public List<TheKrystalShip.KGSM.Core.Models.InstanceConfigEntry>? GetInstanceConfig(string instanceName, bool settableOnly = false) => throw new NotImplementedException();
-    public KgsmResult RestoreBackup(string instanceName, string backupName, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult PruneBackups(string instanceName, int keepN, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult GenerateId(string blueprintName, string? customName = null) => throw new NotImplementedException();
-    public KgsmResult Save(string instanceName) => throw new NotImplementedException();
-    public KgsmResult SendInput(string instanceName, string command, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public KgsmResult FindConfigPath(string instanceName) => throw new NotImplementedException();
-    public KgsmResult GetInstanceConfigValue(string instanceName, string key) => throw new NotImplementedException();
-    public KgsmResult SetInstanceConfigValue(string instanceName, string key, string value, string? actor = null, string? origin = null) => throw new NotImplementedException();
-    public Task<LogSubscription> SubscribeToLogsAsync(string instanceName, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-    public Task<LogSubscription> SubscribeToLogsAsync(string instanceName, LogLevel minimumLogLevel, bool includeRawLines = true, CancellationToken cancellationToken = default) => throw new NotImplementedException();
 }
 
 /// <summary>An <see cref="IEventService"/> that records subscriptions and lets a test

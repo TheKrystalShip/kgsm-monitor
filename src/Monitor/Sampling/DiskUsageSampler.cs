@@ -1,4 +1,3 @@
-using TheKrystalShip.KGSM.Core.Models;
 
 namespace TheKrystalShip.KGSM.Monitor.Sampling;
 
@@ -47,10 +46,10 @@ internal sealed class DiskUsageSampler
     /// so the swap needs no lock. An instance whose working dir is empty/unreadable is left
     /// out of the new map (→ <see cref="Get"/> null), rather than carried stale or zeroed.
     /// </summary>
-    public void Refresh(IReadOnlyDictionary<string, Instance> instances)
+    public void Refresh(IReadOnlyDictionary<string, WatchedServer> instances)
     {
         var next = new Dictionary<string, long>(instances.Count, StringComparer.Ordinal);
-        foreach ((string id, Instance instance) in instances)
+        foreach ((string id, WatchedServer instance) in instances)
         {
             if (TryDirectorySize(instance.WorkingDir) is long bytes)
                 next[id] = bytes;

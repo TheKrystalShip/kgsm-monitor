@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — the watch-list comes from the engine core, not the engine-interop library
+
+The per-server watch-list is the engine's registry read in-process (`TheKrystalShip.KGSM.Engine`
+4.0.0-dev.7), shaped into a monitor-owned `WatchedServer` per instance. Events and this daemon's own journal
+come from `TheKrystalShip.KGSM.Journal` 2.6.0-dev.1. `Monitor__KgsmPath` names the `kgsm` binary. The monitor
+no longer references `TheKrystalShip.KGSM.Lib`.
+
 ### Fixed — journal appends keep every line under concurrent writes (2.22.5)
 
 The daemon pins `TheKrystalShip.KGSM.Journal` 2.4.1, whose writer appends with `O_APPEND`. Concurrent appends

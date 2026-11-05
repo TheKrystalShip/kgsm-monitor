@@ -1,5 +1,4 @@
 using BenchmarkDotNet.Attributes;
-using TheKrystalShip.KGSM.Core.Models;
 using TheKrystalShip.KGSM.Monitor;
 using TheKrystalShip.KGSM.Monitor.Contracts;
 using TheKrystalShip.KGSM.Monitor.Sampling;
@@ -29,12 +28,12 @@ public class SourceBenchmarks
     private readonly DiskSource _disk = new(Opts.MountFsDeny);
 
     private readonly CgroupSampler _cgroup = new();
-    private Dictionary<string, Instance> _oneServer = new();
+    private Dictionary<string, WatchedServer> _oneServer = new();
 
     private readonly GpuSource _gpu = new();
 
     private readonly ProcTreeSampler _procTree = new();
-    private Dictionary<string, Instance> _oneNative = new();
+    private Dictionary<string, WatchedServer> _oneNative = new();
 
     [GlobalSetup]
     public void Setup()
@@ -87,13 +86,13 @@ public class SourceBenchmarks
     [Benchmark]
     public ServerMetrics[] ServerNative() => _procTree.Sample(_oneNative);
 
-    private static Dictionary<string, Instance> OneNativeForSelf()
+    private static Dictionary<string, WatchedServer> OneNativeForSelf()
     {
         string pidFile = Path.Combine(Path.GetTempPath(), $"kgsm-bench-{Environment.ProcessId}.pid");
         File.WriteAllText(pidFile, Environment.ProcessId.ToString());
-        return new Dictionary<string, Instance>
+        return new Dictionary<string, WatchedServer>
         {
-            ["bench-native"] = new Instance
+            ["bench-native"] = new WatchedServer
             {
                 Name = "bench-native",
                 PidFile = pidFile, // no compose_file = native
@@ -101,7 +100,7 @@ public class SourceBenchmarks
         };
     }
 
-    private static Dictionary<string, Instance> DiscoverOneContainerCgroup()
+    private static Dictionary<string, WatchedServer> DiscoverOneContainerCgroup()
     {
         const string slice = "/sys/fs/cgroup/system.slice";
         if (Directory.Exists(slice))
@@ -119,9 +118,9 @@ public class SourceBenchmarks
                     string id = name["docker-".Length..^".scope".Length];
                     string pidFile = Path.Combine(Path.GetTempPath(), $"kgsm-bench-ctr-{Environment.ProcessId}.pid");
                     File.WriteAllText(pidFile, id);
-                    return new Dictionary<string, Instance>
+                    return new Dictionary<string, WatchedServer>
                     {
-                        ["bench"] = new Instance
+                        ["bench"] = new WatchedServer
                         {
                             Name = "bench",
                             ComposeFile = "/opt/bench/docker-compose.yml", // is-container signal
@@ -131,6 +130,6 @@ public class SourceBenchmarks
                 }
             }
         }
-        return new Dictionary<string, Instance>();
+        return new Dictionary<string, WatchedServer>();
     }
 }

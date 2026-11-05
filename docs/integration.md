@@ -446,7 +446,7 @@ instance list has changed, and stores nothing.
 
 Engine event history comes from the record itself — kgsm's append-only journal at
 `/var/lib/kgsm/events/YYYY-MM-DD.ndjson`, which any number of readers may tail or query
-concurrently. From C#, read it through kgsm-lib's `IEventJournalHistory`; the format is documented
+concurrently. From C#, read it through the Journal package's `IEventJournalHistory`; the format is documented
 in `kgsm/docs/events.md` if you would rather parse it yourself.
 
 That is deliberate: what happened to a host is a property of the host, and making it depend on a

@@ -50,17 +50,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The single KGSM chokepoint (instance resync + event watch + resolution metadata) for
-         per-server cgroup metrics AND (1.36.0+) engine event-history persistence. Consumed as the
-         published NuGet package; the net9 lib is IsAotCompatible, so consuming it from this net10 AOT
-         app is a verified pattern. Instance.ports is the structured array
-         ([{start,end,protocol}], the canonical port format); Instance.CgroupPath supplies native
-         cgroup addressing for the resolver. 1.36.0 adds IEventService.RegisterRawHandler (every
-         deserialized event envelope, known or unknown type — src/Monitor/History/EventPersistService.cs)
-         and Events.AuditId.ForEvent (the deterministic evt_<hash> id shared with kgsm-api, so both
-         sides compute the same id with zero coordination). -->
-    <PackageReference Include="TheKrystalShip.KGSM.Lib" Version="8.3.0" />
-    <PackageReference Include="TheKrystalShip.KGSM.Journal" Version="2.4.1" />
+    <!-- The engine core supplies the instance watch-list in-process (EngineReader); the journal package
+         supplies the event reader (EventService, federation) and the event vocabulary the handlers bind
+         to, plus the writer for this daemon's own journal. The engine reads each server's cgroup
+         addressing from the instance layout. -->
+    <PackageReference Include="TheKrystalShip.KGSM.Engine" Version="4.0.0-dev.7" />
+    <PackageReference Include="TheKrystalShip.KGSM.Journal" Version="2.6.0-dev.1" />
   </ItemGroup>
 
   <ItemGroup>

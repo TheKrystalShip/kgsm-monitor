@@ -116,7 +116,7 @@ public sealed class MonitorSettings
     [ConfigField("ifaceDeny", "Excluded interface prefixes", Group = "sampling", Type = ConfigType.Csv)]
     public string IfaceDenyPrefixes { get; set; } = "veth";
 
-    /// <summary>Path to the KGSM executable. Empty (the default) disables per-server sampling and
+    /// <summary>Path to the KGSM executable (the `kgsm` binary). Empty (the default) disables per-server sampling and
     /// runs the monitor host-only, so the daemon is useful where KGSM is absent.</summary>
     /// <panel>Path to the KGSM executable. Empty turns per-server sampling off entirely and the
     /// monitor reports host metrics only.</panel>
@@ -124,10 +124,10 @@ public sealed class MonitorSettings
     public string KgsmPath { get; set; } = string.Empty;
 
     /// <summary>How often to re-list KGSM instances (the source-of-truth resync), in milliseconds.
-    /// Floor 1000. This shells out to KGSM — a process spawn, the very cost the metrics path
-    /// avoids — so it runs on its own slow cadence, off the metrics tick.</summary>
-    /// <panel>How often the monitor re-lists KGSM instances to refresh its watch list. This spawns a
-    /// process, so it runs well off the metrics tick.</panel>
+    /// Floor 1000. This opens every instance's config, the cost the metrics path
+    /// avoids, so it runs on its own slow cadence, off the metrics tick.</summary>
+    /// <panel>How often the monitor re-lists KGSM instances to refresh its watch list. This opens every
+    /// instance's config, so it runs well off the metrics tick.</panel>
     [ConfigField("resyncMs", "Instance resync interval", Group = "servers",
         Min = Floors.ServerResyncMs, Unit = "ms", DependsOn = "kgsmPath")]
     public int? ServerResyncMs { get; set; }

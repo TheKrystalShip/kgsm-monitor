@@ -178,7 +178,7 @@
       "key": "resyncMs",
       "env": "Monitor__ServerResyncMs",
       "label": "Instance resync interval",
-      "description": "How often the monitor re-lists KGSM instances to refresh its watch list. This spawns a process, so it runs well off the metrics tick.",
+      "description": "How often the monitor re-lists KGSM instances to refresh its watch list. This opens every instance's config, so it runs well off the metrics tick.",
       "group": "servers",
       "type": "int",
       "default": "15000",
