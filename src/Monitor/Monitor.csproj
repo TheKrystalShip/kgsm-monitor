@@ -54,7 +54,7 @@
          supplies the event reader (EventService, federation) and the event vocabulary the handlers bind
          to, plus the writer for this daemon's own journal. The engine reads each server's cgroup
          addressing from the instance layout. -->
-    <PackageReference Include="TheKrystalShip.KGSM.Engine" Version="4.0.0-dev.7" />
+    <PackageReference Include="TheKrystalShip.KGSM.Engine" Version="4.0.0-dev.9" />
     <PackageReference Include="TheKrystalShip.KGSM.Journal" Version="2.6.0-dev.1" />
   </ItemGroup>
 
