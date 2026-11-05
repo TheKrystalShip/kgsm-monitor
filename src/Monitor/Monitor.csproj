@@ -13,7 +13,7 @@
 
     <RootNamespace>TheKrystalShip.KGSM.Monitor</RootNamespace>
     <AssemblyName>kgsm-monitor</AssemblyName>
-    <Version>2.22.5</Version>
+    <Version>3.0.0</Version>
 
     <!-- Required by the source-generated [LibraryImport] sysconf(_SC_CLK_TCK) p/invoke in
          ProcTreeSampler (Slice 3). The generated marshalling stub uses unsafe; no hand-written
@@ -54,8 +54,8 @@
          supplies the event reader (EventService, federation) and the event vocabulary the handlers bind
          to, plus the writer for this daemon's own journal. The engine reads each server's cgroup
          addressing from the instance layout. -->
-    <PackageReference Include="TheKrystalShip.KGSM.Engine" Version="4.0.0-dev.9" />
-    <PackageReference Include="TheKrystalShip.KGSM.Journal" Version="2.6.0-dev.1" />
+    <PackageReference Include="TheKrystalShip.KGSM.Engine" Version="4.0.0" />
+    <PackageReference Include="TheKrystalShip.KGSM.Journal" Version="3.1.0" />
   </ItemGroup>
 
   <ItemGroup>

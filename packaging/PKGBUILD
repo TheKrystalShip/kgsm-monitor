@@ -56,7 +56,7 @@ package_kgsm-monitor() {
     backup=('etc/kgsm-monitor/kgsm-monitor.env')
     install="kgsm-monitor.install"
     optdepends=(
-        'kgsm: lists instances, which is what gives per-server metrics a watch-list'
+        'kgsm: 4.0 or newer; lists instances, which is what gives per-server metrics a watch-list'
         'kgsm-watchdog: owns kgsm.slice, where native servers live'
         'kgsm-monitor-net-meter: per-server network rx/tx (without it those fields read null)'
         'docker: sampling container-kind servers'
